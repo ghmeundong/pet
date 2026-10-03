@@ -61,7 +61,63 @@ async function ollamaTurn(messages, specs, onChunk) {
 }
 
 // 소형 모델이 도구를 안 부르는 경우를 대비해, 읽기 전용 도구는 질문 패턴에 따라 코드에서 미리 호출한다
+// 웹 검색 요청에서 검색어만 뽑는다
+function extractQuery(text) {
+  return text
+    .replace(/유튜브|youtube|구글|google|크롬|chrome/gi, ' ')
+    .replace(/에서|으로|열어서|열어|켜서|켜|검색해\s*줘|검색해|검색|찾아\s*줘|찾아|틀어\s*줘|틀어|해\s*줘|줘/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const searchUrl = (base) => (text) => {
+  const q = extractQuery(text)
+  return q ? { url: base + encodeURIComponent(q), wait_seconds: 0 } : null
+}
+
+const SITES = {
+  유튜브: 'https://www.youtube.com',
+  youtube: 'https://www.youtube.com',
+  구글: 'https://www.google.com',
+  google: 'https://www.google.com',
+  네이버: 'https://www.naver.com',
+  naver: 'https://www.naver.com',
+  깃허브: 'https://github.com',
+  github: 'https://github.com'
+}
+
+const TARGET_NAMES = /유튜브|youtube|구글|google|네이버|naver|깃허브|github|지메일|gmail|크롬|chrome|계산기|메모장|그림판/gi
+
 const PREFETCH = [
+  [
+    'close_app',
+    /(유튜브|youtube|구글|google|네이버|naver|깃허브|github|지메일|gmail|크롬|chrome|계산기|메모장|그림판).*(끄|꺼|닫|종료)/i,
+    (c) => ({ target: c.match(/유튜브|youtube|구글|google|네이버|naver|깃허브|github|지메일|gmail|크롬|chrome|계산기|메모장|그림판/i)[0] })
+  ],
+  ['launch_app', /(메모장|계산기|그림판).*(열|켜|실행)/, (c) => ({ app: c.match(/메모장|계산기|그림판/)[0] })],
+  [
+    'close_app',
+    /닫|끄|꺼|종료/,
+    // 대상이 없는 "닫아줘"는 직전 대화에서 마지막으로 언급된 앱/사이트를 닫는다
+    () => {
+      const { recent } = getMemory()
+      for (let i = recent.length - 1; i >= 0; i--) {
+        const found = recent[i].content.match(TARGET_NAMES)
+        if (found) return { target: found[found.length - 1] }
+      }
+      return null
+    }
+  ],
+  ['open_url', /(유튜브|youtube).*(검색|찾아|틀어)/i, searchUrl('https://www.youtube.com/results?search_query=')],
+  ['open_url', /(구글|google).*(검색|찾아)/i, searchUrl('https://www.google.com/search?q=')],
+  [
+    'open_url',
+    new RegExp(`(${Object.keys(SITES).join('|')}).*(열어|켜|들어가|접속|띄워|가줘)`, 'i'),
+    (t) => {
+      const key = Object.keys(SITES).find((k) => new RegExp(k, 'i').test(t))
+      return { url: SITES[key], wait_seconds: 0 }
+    }
+  ],
   ['open_url', /gmail|지메일|메일함|새\s*메일/i, { url: 'https://mail.google.com', wait_seconds: 6 }],
   ['get_active_window', /뭐\s*하|뭐\s*보|어떤\s*(앱|창|프로그램)|무슨\s*(앱|창|프로그램)|열려\s*있/],
   ['read_screen_text', /화면|보이는|gmail|지메일|메일|이\s*(프로젝트|코드|문서|페이지|글|내용|파일|사이트)|이거|이게|지금.*(어때|같아)/],
@@ -71,8 +127,20 @@ const PREFETCH = [
 
 async function prefetchContext(text, messages, ctx) {
   const enabled = getToolSpecs().map((s) => s.name)
-  for (const [name, pattern, args = {}] of PREFETCH) {
-    if (!enabled.includes(name) || !pattern.test(text)) continue
+  let opened = false
+  let closed = false
+  // 여러 동작이 섞인 요청은 절 단위로 나눠 각각 판단한다 (예: "유튜브 끄고 계산기 열어줘")
+  const clauses = text.split(/(?<=끄고|닫고|열고|켜고|하고)\s+|\s*그리고\s*|\s*,\s*/).filter(Boolean)
+  for (const [name, pattern, argsOrFn = {}] of PREFETCH) {
+    if (!enabled.includes(name)) continue
+    const clause = clauses.find((c) => pattern.test(c))
+    if (!clause) continue
+    if (name === 'open_url' && opened) continue
+    if (name === 'close_app' && closed) continue
+    const args = typeof argsOrFn === 'function' ? argsOrFn(clause) : argsOrFn
+    if (!args) continue
+    if (name === 'open_url') opened = true
+    if (name === 'close_app') closed = true
     const result = await runTool(name, args, ctx)
     console.log(`[ollama] prefetch ${name} -> ${result.slice(0, 200)}`)
     messages.push(
@@ -119,6 +187,7 @@ async function agentOllama(text, ctx) {
   ]
   let retried = false
   let nudged = false
+  const closeOnly = /닫|끄|꺼|종료/.test(text) && !/열|켜|실행|틀/.test(text)
   let usedTool = false
   const answerPrompt = {
     role: 'user',
@@ -133,18 +202,21 @@ async function agentOllama(text, ctx) {
     }
   }
   for (let i = 0; i < MAX_ROUNDS; i++) {
-    const specs = getToolSpecs()
+    const specs = getToolSpecs().filter((s) => !(closeOnly && ['open_url', 'launch_app'].includes(s.name)))
     console.log(`[ollama] round ${i + 1} model=${OLLAMA_MODEL} tools=[${specs.map((s) => s.name)}] user=${JSON.stringify(text)}`)
     const { content, toolCalls } = await ollamaTurn(messages, specs, ctx.onChunk)
     console.log(`[ollama] reply=${JSON.stringify(content)} toolCalls=${JSON.stringify(toolCalls)}`)
     if (!toolCalls.length) {
-      // 행동하겠다고 말만 하고 도구를 안 부른 경우 한 번 더 밀어붙인다
-      if (!nudged && !usedTool && specs.length && /하겠|할게|볼게|보겠|해\s*볼|확인해\s*보|시도해|기다려/.test(content)) {
+      // 도구 없이 행동하겠다/했다고만 말하는 경우 한 번 더 밀어붙인다
+      const intent = /하겠|할게|볼게|보겠|해\s*볼|확인해\s*보|시도해|기다려/.test(content)
+      const claimsDone = /완료|실행함|열었|켰|닫았|했어|했습니다|됐/.test(content)
+      const commandLike = /해\s*줘|해\s*줄래|열어|켜|꺼|닫아|검색|틀어|찾아|실행|확인/.test(text)
+      if (!nudged && !usedTool && specs.length && (intent || (claimsDone && commandLike))) {
         nudged = true
         ctx.onReset()
         messages.push(
           { role: 'assistant', content },
-          { role: 'user', content: '말로 설명하지 말고 지금 바로 알맞은 도구를 호출해.' }
+          { role: 'user', content: '말로 설명하지 말고, 실제로 도구를 호출하지 않았으면 아무것도 하지 못한 거야. 지금 바로 알맞은 도구를 호출해.' }
         )
         continue
       }

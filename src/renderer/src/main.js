@@ -86,6 +86,7 @@ const TOOL_LABELS = {
   open_system_panel: '작업관리자·제어판·설정 열기',
   volume: '볼륨 조절',
   open_url: '웹페이지 열기',
+  close_app: '앱/탭 닫기',
   memory: '기억 저장(디스크)',
   set_brightness: '화면 밝기 조절'
 }

@@ -3,7 +3,7 @@ import { join } from 'path'
 import { readFileSync, writeFileSync } from 'fs'
 
 const DEFAULTS = {
-  tools: { get_active_window: true, read_screen_text: false, launch_app: false, read_file: false, run_command: false, set_brightness: true, open_system_panel: true, volume: true, memory: true, open_url: true },
+  tools: { get_active_window: true, read_screen_text: false, launch_app: false, read_file: false, run_command: false, set_brightness: true, open_system_panel: true, volume: true, memory: true, open_url: true, close_app: true },
   // 앱 실행 허용 목록: 모델이 쓰는 이름 -> 실행 파일 (settings.json에서만 편집)
   allowedApps: { notepad: 'notepad.exe', calculator: 'calc.exe', paint: 'mspaint.exe' },
   readRoots: []

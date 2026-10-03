@@ -76,7 +76,7 @@ const TOOLS = {
   },
   launch_app: {
     label: '앱 실행',
-    description: '설치된 앱이나 프로그램을 이름 또는 경로로 실행한다. 예: notepad, calc, chrome, C:\\Windows\\notepad.exe',
+    description: '설치된 앱이나 프로그램을 이름 또는 경로로 실행한다. 예: notepad, calc, chrome, C:\\Windows\\notepad.exe. 웹사이트(YouTube, Gmail 등)는 이 도구가 아니라 open_url을 쓴다.',
     parameters: {
       type: 'object',
       properties: { app: { type: 'string', description: '실행할 앱 이름 또는 경로' } },
@@ -197,6 +197,39 @@ const TOOLS = {
       child.on('error', () => {})
       child.unref()
       return `${key} 열기 요청함`
+    }
+  },
+  close_app: {
+    label: '앱/탭 닫기',
+    description:
+      '앱을 종료하거나, 웹사이트(유튜브 등)면 해당 브라우저 탭을 닫는다. target: 계산기, 메모장, 그림판, 유튜브, 네이버, 깃허브, gmail, 크롬 또는 프로세스 이름',
+    parameters: {
+      type: 'object',
+      properties: { target: { type: 'string', description: '닫을 대상 이름' } },
+      required: ['target']
+    },
+    run: ({ target }) => {
+      const t = String(target ?? '').trim().toLowerCase()
+      let script
+      const sites = { 유튜브: 'YouTube', youtube: 'YouTube', 네이버: 'NAVER', naver: 'NAVER', 깃허브: 'GitHub', github: 'GitHub', 지메일: 'Gmail', gmail: 'Gmail', 구글: 'Google', google: 'Google' }
+      const procs = { 계산기: 'CalculatorApp,calc,Calculator', 메모장: 'notepad', 그림판: 'mspaint,mspaintapp', 크롬: 'chrome', chrome: 'chrome' }
+      if (sites[t]) {
+        // 제목에 사이트명이 들어간 창을 활성화한 뒤 Ctrl+W로 탭을 닫는다
+        script = `$s=New-Object -ComObject WScript.Shell; if($s.AppActivate('${sites[t]}')){Start-Sleep -Milliseconds 400; $s.SendKeys('^w'); '${sites[t]} 탭 닫음'} else {'${sites[t]} 창을 찾지 못함'}`
+      } else {
+        const names = procs[t] ?? (/^[\w.\- ]+$/.test(t) ? t.replace(/\.exe$/, '') : null)
+        if (!names) return `닫을 수 없는 대상 "${target}"`
+        script = `$p=Get-Process -Name ${names} -ErrorAction SilentlyContinue; if($p){$p | Stop-Process -Force; '종료함'} else {'실행 중인 프로세스 없음'}`
+      }
+      console.log(`[tool] close ${t}`)
+      return new Promise((done) => {
+        execFile(
+          'powershell.exe',
+          ['-NoProfile', '-EncodedCommand', Buffer.from(`[Console]::OutputEncoding=[Text.Encoding]::UTF8\n${script}`, 'utf16le').toString('base64')],
+          { timeout: 10000, windowsHide: true },
+          (err, out) => done(err ? `닫기 실패: ${err.message.slice(0, 200)}` : out.trim())
+        )
+      })
     }
   },
   open_url: {
