@@ -1,0 +1,15 @@
+appId: com.example.desktoppet
+productName: DesktopPet
+directories:
+  buildResources: build
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - node_modules/tesseract.js/**
+  - node_modules/tesseract.js-core/**
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

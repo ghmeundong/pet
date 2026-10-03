@@ -1,0 +1,64 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Malgun Gothic', sans-serif;
+  user-select: none;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+#pet {
+  font-size: 96px;
+  cursor: pointer;
+  line-height: 1;
+}
+#pet.bounce { animation: bounce 0.4s; }
+@keyframes bounce {
+  50% { transform: translateY(-20px) scale(1.1); }
+}
+#bubble {
+  max-width: 320px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 2px solid #333;
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  user-select: text;
+}
+.hidden { display: none !important; }
+#settings, #confirm {
+  background: #fff;
+  border: 2px solid #333;
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+#settings label { display: block; }
+#confirm-msg { white-space: pre-wrap; margin-bottom: 6px; }
+#gear {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  border: 0;
+  background: #fff;
+  border-radius: 50%;
+  cursor: pointer;
+}
+#input {
+  width: 260px;
+  padding: 8px 12px;
+  border: 2px solid #333;
+  border-radius: 16px;
+  outline: none;
+}

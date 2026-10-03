@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'"
+    />
+    <title>Desktop Pet</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="settings" class="interactive hidden"></div>
+    <div id="confirm" class="interactive hidden">
+      <div id="confirm-msg"></div>
+      <button id="confirm-yes">허용</button>
+      <button id="confirm-no">거부</button>
+    </div>
+    <div id="bubble" class="interactive hidden"></div>
+    <div id="pet" class="interactive">🐶</div>
+    <button id="gear" class="interactive" title="도구 권한">⚙</button>
+    <form id="form" class="interactive">
+      <input id="input" autocomplete="off" placeholder="펫에게 말 걸기..." />
+    </form>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
