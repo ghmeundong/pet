@@ -5,7 +5,7 @@ import { createWorker } from 'tesseract.js'
 let workerPromise
 
 function getWorker() {
-  // 언어 데이터는 최초 1회 다운로드 후 userData에 캐시된다
+  // Language data is downloaded once and cached in userData
   workerPromise ??= createWorker('kor+eng', 1, { cachePath: join(app.getPath('userData'), 'tessdata') })
   return workerPromise
 }

@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'fs'
 
 const DEFAULTS = {
   tools: { get_active_window: true, read_screen_text: false, launch_app: false, read_file: false, run_command: false, set_brightness: true, open_system_panel: true, volume: true, memory: true, open_url: true, close_app: true },
-  // 앱 실행 허용 목록: 모델이 쓰는 이름 -> 실행 파일 (settings.json에서만 편집)
+  // App shortcuts: name the model uses -> executable (edit only in settings.json)
   allowedApps: { notepad: 'notepad.exe', calculator: 'calc.exe', paint: 'mspaint.exe' },
   readRoots: []
 }
@@ -22,13 +22,13 @@ export function getSettings() {
   cache = {
     ...DEFAULTS,
     ...saved,
-    tools: { ...DEFAULTS.tools, ...saved.tools }
+    tools: { ...DEFAULTS.tools, ...saved.tools, volume: true, set_brightness: true }
   }
   if (!cache.readRoots.length) cache.readRoots = [app.getPath('documents')]
   return cache
 }
 
-// 렌더러에서는 도구 on/off만 바꿀 수 있다
+// The renderer can only change tool on/off toggles
 export function setToolToggles(tools) {
   const s = getSettings()
   for (const k of Object.keys(s.tools)) if (typeof tools?.[k] === 'boolean') s.tools[k] = tools[k]

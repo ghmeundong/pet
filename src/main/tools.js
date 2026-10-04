@@ -9,10 +9,129 @@ import { deleteNote, listNotes, setNote } from './notes'
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
 const MAX_FILE_CHARS = 8000
+const APP_LAUNCH_COMMAND = /(?:^|[&|;]\s*)(?:start(?:\.exe)?\b|start-process\b|invoke-item\b)|\bcmd(?:\.exe)?\s+\/c\s+start\b|\bexplorer(?:\.exe)?\s+shell:AppsFolder\b|\bstart-process\b/i
 
-const APP_ALIASES = { '메모장': 'notepad', '계산기': 'calculator', '그림판': 'paint', calc: 'calculator', mspaint: 'paint' }
+const APP_ALIASES = { calc: 'calculator', mspaint: 'paint' }
 
-// 기본 오디오 장치의 마스터 볼륨을 읽고 쓰는 Core Audio COM 래퍼
+// Short names -> names registered in the Start menu
+const APP_NAME_HINTS = {
+  battlenet: 'battle.net',
+  vscode: 'visual studio code',
+  code: 'visual studio code',
+  explorer: 'file explorer',
+  lol: 'league of legends'
+}
+
+// Installed-app catalog: Start menu apps, App Paths registry, shortcuts and system executables
+let catalog
+let catalogLoadedAt = 0
+
+const CATALOG_SCRIPT = `
+[Console]::OutputEncoding=[Text.Encoding]::UTF8
+$items=New-Object System.Collections.ArrayList
+Get-StartApps | ForEach-Object { [void]$items.Add(@{n=$_.Name;t=$_.AppID;k='start'}) }
+foreach($root in 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths'){
+  Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object {
+    $p=(Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).'(default)'
+    if($p){ [void]$items.Add(@{n=($_.PSChildName -replace '\\.exe$','');t=$p.Trim('"');k='exe'}) }
+  }
+}
+$dirs=@("$env:ProgramData\\Microsoft\\Windows\\Start Menu","$env:APPDATA\\Microsoft\\Windows\\Start Menu","$env:USERPROFILE\\Desktop","$env:PUBLIC\\Desktop")
+Get-ChildItem -Path $dirs -Recurse -Filter *.lnk -ErrorAction SilentlyContinue | ForEach-Object { [void]$items.Add(@{n=$_.BaseName;t=$_.FullName;k='lnk'}) }
+foreach($d in "$env:windir\\System32","$env:windir"){
+  Get-ChildItem $d -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object { [void]$items.Add(@{n=$_.BaseName;t=$_.FullName;k='exe'}) }
+}
+$items | ConvertTo-Json -Compress
+`
+
+async function loadCatalog(force) {
+  // A forced refresh is throttled so repeated misses do not rescan every time
+  if (catalog && (!force || Date.now() - catalogLoadedAt < 60000)) return catalog
+  catalog = await new Promise((done) =>
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-EncodedCommand', Buffer.from(CATALOG_SCRIPT, 'utf16le').toString('base64')],
+      { timeout: 60000, windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
+      (err, out) => {
+        try {
+          const list = JSON.parse(out)
+          done(Array.isArray(list) ? list : [list])
+        } catch {
+          done(catalog ?? [])
+        }
+      }
+    )
+  )
+  catalogLoadedAt = Date.now()
+  return catalog
+}
+
+export const warmUpAppCatalog = () => loadCatalog().catch(() => {})
+
+// Lowercase, drop version numbers like 0.0.0, keep letters/digits
+const clean = (s) =>
+  String(s)
+    .toLowerCase()
+    .replace(/\bv?\d+(\.\d+)+\b/g, ' ')
+    .replace(/[^a-z0-9\u3131-\uD79D]+/g, ' ')
+    .trim()
+const squash = (s) => clean(s).replace(/ /g, '')
+
+function bigrams(s) {
+  const grams = new Map()
+  for (let i = 0; i < s.length - 1; i++) {
+    const g = s.slice(i, i + 2)
+    grams.set(g, (grams.get(g) ?? 0) + 1)
+  }
+  return grams
+}
+
+// Dice coefficient on character bigrams: tolerant of typos and missing words
+function dice(a, b) {
+  if (a.length < 2 || b.length < 2) return a === b ? 1 : 0
+  const ga = bigrams(a)
+  const gb = bigrams(b)
+  let hits = 0
+  for (const [g, c] of ga) hits += Math.min(c, gb.get(g) ?? 0)
+  return (2 * hits) / (a.length - 1 + b.length - 1)
+}
+
+function score(query, name) {
+  const q = squash(APP_NAME_HINTS[squash(query)] ?? query)
+  const n = squash(name)
+  if (!q || !n) return 0
+  if (q === n) return 100
+  if (n.startsWith(q)) return 92 - Math.min(10, (n.length - q.length) / 2)
+  if (n.includes(q)) return 78
+  if (q.includes(n) && n.length >= 4) return 72
+  const tokens = clean(query).split(' ').filter(Boolean)
+  if (tokens.length > 1 && tokens.every((t) => n.includes(t))) return 68
+  const d = dice(q, n)
+  return d >= 0.6 ? 40 + d * 25 : 0
+}
+
+const KIND_RANK = { start: 2, lnk: 1, exe: 0 }
+
+// Best match plus nearby names to suggest when nothing is good enough
+function pickApp(items, query) {
+  const ranked = items
+    .map((it) => ({ it, s: score(query, it.n) }))
+    .filter((r) => r.s > 0)
+    .sort((a, b) => b.s - a.s || KIND_RANK[b.it.k] - KIND_RANK[a.it.k] || a.it.n.length - b.it.n.length)
+  const q = squash(query)
+  const suggestions = [
+    ...new Set(
+      items
+        .map((it) => ({ n: it.n, d: dice(q, squash(it.n)) }))
+        .filter((r) => r.d >= 0.3)
+        .sort((a, b) => b.d - a.d)
+        .map((r) => r.n)
+    )
+  ].slice(0, 5)
+  return { best: ranked[0]?.it ?? null, suggestions }
+}
+
+// Core Audio COM wrapper that reads/writes the default device master volume
 const AUDIO_SRC = `Add-Type -TypeDefinition @'
 using System.Runtime.InteropServices;
 [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -63,64 +182,86 @@ const SYSTEM_PANELS = {
 
 const TOOLS = {
   get_active_window: {
-    label: '활성 창 확인',
-    description: '사용자가 지금 보고 있는 앱 이름과 창 제목을 알려준다.',
+    label: 'Checking active window',
+    description: 'Returns the app name and window title of the window the user is currently looking at.',
     parameters: { type: 'object', properties: {} },
     run: async () => JSON.stringify(await readActiveWindow())
   },
   read_screen_text: {
-    label: '화면 읽기',
-    description: '현재 화면 전체를 OCR로 읽어 텍스트를 반환한다. 느리므로 꼭 필요할 때만 쓴다.',
+    label: 'Reading screen',
+    description: 'Reads the whole screen with OCR and returns the text. Slow, so use only when really needed.',
     parameters: { type: 'object', properties: {} },
-    run: async () => (await readScreenText(1500)) || '(읽힌 텍스트 없음)'
+    run: async () => (await readScreenText(1500)) || '(no text recognized)'
   },
   launch_app: {
-    label: '앱 실행',
-    description: '설치된 앱이나 프로그램을 이름 또는 경로로 실행한다. 예: notepad, calc, chrome, C:\\Windows\\notepad.exe. 웹사이트(YouTube, Gmail 등)는 이 도구가 아니라 open_url을 쓴다.',
+    label: 'Launching app',
+    description: 'Launches an installed app or program (including games and launchers) by name or path, e.g. notepad, calc, chrome, Battle.net, C:\\Windows\\notepad.exe. Use this as the only tool to start an app; do not start the same app again with a shell command. For websites (YouTube, Gmail, ...) use open_url instead.',
     parameters: {
       type: 'object',
-      properties: { app: { type: 'string', description: '실행할 앱 이름 또는 경로' } },
+      properties: { app: { type: 'string', description: 'App name or path to launch' } },
       required: ['app']
     },
-    describe: (a) => `"${a.app}" 앱을 실행할까요?`,
+    describe: (a) => `Launch "${a.app}"?`,
     run: async ({ app: raw }) => {
       const key = String(raw ?? '').trim()
       const lower = key.toLowerCase().replace(/\.exe$/, '')
-      const target = getSettings().allowedApps[APP_ALIASES[lower] ?? lower] ?? key
-      // cmd 메타문자로 다른 명령이 붙는 것만 막는다
-      if (!target || /[&|<>^%"\r\n]/.test(target)) return `실행할 수 없는 이름 "${raw}"`
-      console.log(`[tool] launch ${target}`)
-      const child = spawn('cmd', ['/c', 'start', '""', target], { detached: true, stdio: 'ignore', windowsHide: true })
-      child.on('error', () => {})
-      child.unref()
-      return `${target} 실행 요청함`
+      const mapped = getSettings().allowedApps[APP_ALIASES[lower] ?? lower]
+      const isPath = /[\\/]/.test(key) || /\.(exe|lnk)$/i.test(key)
+      const start = (target) => {
+        // Only block cmd metacharacters that would chain another command
+        if (!target || /[&|<>^%"\r\n]/.test(target)) return `Cannot launch "${raw}"`
+        console.log(`[tool] launch ${target}`)
+        const child = spawn('cmd', ['/c', 'start', '""', target], { detached: true, stdio: 'ignore', windowsHide: true })
+        child.on('error', () => {})
+        child.unref()
+        return `${target} launch requested`
+      }
+      if (mapped) return start(mapped)
+      if (isPath) return start(key)
+      // With only a name, fuzzy-match it against everything installed (games/launchers included)
+      let found = pickApp(await loadCatalog(), key)
+      if (!found.best) found = pickApp(await loadCatalog(true), key)
+      if (!found.best) {
+        const hint = found.suggestions.length ? ` Did you mean: ${found.suggestions.join(', ')}? Retry with one of these exact names.` : ''
+        return `Could not find "${raw}" among installed apps, so it was NOT launched.${hint}`
+      }
+      const hit = found.best
+      console.log(`[tool] launch ${hit.n} (${hit.k}: ${hit.t})`)
+      if (hit.k === 'start') {
+        const child = spawn('explorer.exe', [`shell:AppsFolder\\${hit.t}`], { detached: true, stdio: 'ignore' })
+        child.on('error', () => {})
+        child.unref()
+        return `${hit.n} launch requested`
+      }
+      start(hit.t)
+      return `${hit.n} launch requested`
     }
   },
   read_file: {
-    label: '파일 읽기',
-    description: '텍스트 파일 내용을 읽는다. 절대 경로 또는 홈 폴더 기준 상대 경로.',
+    label: 'Reading file',
+    description: 'Reads a text file. Absolute path, or path relative to the home folder.',
     parameters: {
       type: 'object',
-      properties: { path: { type: 'string', description: '파일 경로' } },
+      properties: { path: { type: 'string', description: 'File path' } },
       required: ['path']
     },
-    describe: (a) => `파일을 읽을까요?\n${a.path}`,
+    describe: (a) => `Read this file?\n${a.path}`,
     run: async ({ path }) => {
       const file = resolve(homedir(), String(path))
       const info = await stat(file)
-      if (!info.isFile() || info.size > MAX_FILE_BYTES) return '읽을 수 없는 파일'
+      if (!info.isFile() || info.size > MAX_FILE_BYTES) return 'Cannot read this file'
       return (await readFile(file, 'utf8')).slice(0, MAX_FILE_CHARS)
     }
   },
   set_brightness: {
-    label: '화면 밝기 조절',
+    label: 'Adjusting brightness',
     description:
-      '화면 밝기(0~100)를 조절한다. 절대값은 level, 상대 증감은 delta(예: 조금 낮추기 -10, 더 밝게 +20)로 지정한다. 노트북 내장 디스플레이만 지원.',
+      'Sets screen brightness (0-100). Use level for an absolute value or delta for a relative change (e.g. slightly dimmer = -10, brighter = +20). Laptop built-in displays only.',
     parameters: {
       type: 'object',
       properties: {
-        level: { type: 'number', description: '목표 밝기 0~100' },
-        delta: { type: 'number', description: '현재 밝기에 더할 값 (-100~100)' }
+        level: { type: 'number', description: 'Target brightness 0-100' },
+        delta: { type: 'number', description: 'Value to add to the current brightness (-100 to 100)' }
       }
     },
     run: ({ level, delta }) => {
@@ -130,96 +271,112 @@ const TOOLS = {
         (abs ? `$n=${Math.round(Number(level))};` : `$n=$cur+(${Math.round(Number(delta)) || 0});`) +
         '$n=[Math]::Max(0,[Math]::Min(100,$n));' +
         'Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{Timeout=1;Brightness=$n} | Out-Null;' +
-        'Write-Output "밝기 $cur -> $n"'
+        'Write-Output "Brightness $cur -> $n"'
       return new Promise((done) => {
         execFile('powershell.exe', ['-NoProfile', '-Command', script], { timeout: 10000, windowsHide: true }, (err, out) =>
-          done(err ? '밝기 조절 실패 (내장 디스플레이가 아니거나 지원되지 않음)' : out.trim())
+          done(err ? 'Brightness change failed (not a built-in display or unsupported)' : out.trim())
         )
       })
     }
   },
   run_command: {
-    label: '명령 실행',
+    label: 'Running command',
     description:
-      'Windows cmd 또는 PowerShell 명령을 실행하고 출력을 반환한다. 사용자가 cmd를 언급하지 않아도, 파일/폴더 조작, 시스템 정보(IP, 디스크, 프로세스 등), 레지스트리·서비스·시스템 설정 변경, 프로그램 종료·실행 등 명령줄로 해결되는 일이면 이 도구로 직접 시도한다. cmd로 안 되면 shell=powershell을 쓴다. 실패하면 명령을 고쳐 다시 시도한다. 사용자가 진행 과정을 직접 보고 싶어하거나 오래 걸리는 작업이면 visible=true.',
+      'Runs a Windows cmd or PowerShell command and returns its output. Use it directly, even if the user does not mention cmd, for command-line tasks: file/folder operations, system info (IP, disk, processes), registry/service/system settings, or killing programs. Do not use it to open or start apps; use launch_app instead. If cmd fails use shell=powershell. If it fails, fix the command and retry. Use visible=true if the user wants to watch the process or the task is long.',
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: '실행할 명령' },
-        shell: { type: 'string', enum: ['cmd', 'powershell'], description: '기본 cmd' },
-        visible: { type: 'boolean', description: 'true면 새 창을 띄워 실행' }
+        command: { type: 'string', description: 'The actual shell command text to run (never a tool name). May be empty only when visible is true, to just open a terminal window.' },
+        shell: { type: 'string', enum: ['cmd', 'powershell'], description: 'Default cmd' },
+        visible: { type: 'boolean', description: 'If true, run in a new visible window' }
       },
       required: ['command']
     },
-    describe: (a) => `명령을 실행할까요?\n${a.command}`,
+    examples: [
+      { request: 'what is my IP address', args: { command: 'ipconfig', shell: 'cmd' } },
+      { request: 'show the 5 processes using the most memory', args: { command: 'Get-Process | Sort-Object WS -Descending | Select-Object -First 5 Name,WS', shell: 'powershell' } },
+      { request: 'create a folder called test on the desktop', args: { command: 'mkdir "%USERPROFILE%\\Desktop\\test"', shell: 'cmd' } },
+      { request: 'open a cmd window', args: { command: '', shell: 'cmd', visible: true } },
+      { request: 'show free disk space on the C drive', args: { command: 'Get-PSDrive C | Select-Object Used,Free', shell: 'powershell' } },
+      { request: 'list the files on my desktop', args: { command: 'dir "%USERPROFILE%\\Desktop"', shell: 'cmd' } },
+      { request: 'kill all notepad processes', args: { command: 'taskkill /IM notepad.exe /F', shell: 'cmd' } },
+      { request: 'open a powershell window and ping google', args: { command: 'ping google.com', shell: 'powershell', visible: true } }
+    ],
+    describe: (a) => `Run this command?\n${a.command}`,
     run: ({ command, shell, visible }) => {
       const cmd = String(command ?? '').trim()
-      if (!cmd) return Promise.resolve('빈 명령')
       const ps = shell === 'powershell'
+      if (APP_LAUNCH_COMMAND.test(cmd)) return 'Cannot start apps with shell commands; use launch_app instead.'
+      if (Object.hasOwn(TOOLS, cmd)) {
+        return Promise.resolve(`Cannot run "${cmd}": that is a tool name, not a shell command. Provide the actual ${ps ? 'PowerShell' : 'cmd'} command.`)
+      }
+      if (!cmd && !visible) return Promise.resolve('Empty command')
       console.log(`[tool] ${ps ? 'powershell' : 'cmd'}${visible ? ' (visible)' : ''}> ${cmd}`)
       if (visible) {
-        const args = ps ? ['/c', 'start', 'powershell', '-NoExit', '-Command', cmd] : ['/c', 'start', 'cmd', '/k', cmd]
+        const args = ps
+          ? ['/c', 'start', 'powershell', '-NoExit', ...(cmd ? ['-Command', cmd] : [])]
+          : ['/c', 'start', 'cmd', ...(cmd ? ['/k', cmd] : [])]
         const child = spawn('cmd', args, { detached: true, stdio: 'ignore' })
         child.on('error', () => {})
         child.unref()
-        return Promise.resolve('새 창에서 실행 요청함')
+        return Promise.resolve('Launch requested in a new window')
       }
       return new Promise((done) => {
         const finish = (err, stdout, stderr) => {
           const out = `${stdout}${stderr}`.trim().slice(0, MAX_FILE_CHARS)
-          done(err?.killed ? `시간 초과(30초)\n${out}` : out || (err ? `실패: ${err.message}` : '(출력 없음)'))
+          done(err?.killed ? `Timed out (30s)\n${out}` : out || (err ? `Failed: ${err.message}` : '(no output)'))
         }
         const opts = { timeout: 30000, maxBuffer: 1024 * 1024, windowsHide: true }
         if (ps) {
-          // PowerShell 출력을 UTF-8로 받는다
+          // Receive PowerShell output as UTF-8
           execFile('powershell.exe', ['-NoProfile', '-Command', `[Console]::OutputEncoding=[Text.Encoding]::UTF8; ${cmd}`], opts, finish)
         } else {
-          // chcp 65001로 cmd 출력을 UTF-8로 받는다
+          // chcp 65001 makes cmd output UTF-8
           exec(`chcp 65001>nul && ${cmd}`, opts, finish)
         }
       })
     }
   },
   open_system_panel: {
-    label: '시스템 창 열기',
-    description: `작업 관리자, 제어판, Windows 설정 등 시스템 화면을 연다. target: ${Object.keys(SYSTEM_PANELS).join(', ')} 또는 'ms-settings:화면이름'(예: ms-settings:privacy)`,
+    label: 'Opening system screen',
+    description: `Opens a system screen such as Task Manager, Control Panel or Windows Settings. target: ${Object.keys(SYSTEM_PANELS).join(', ')}, or 'ms-settings:name' (e.g. ms-settings:privacy)`,
     parameters: {
       type: 'object',
-      properties: { target: { type: 'string', description: '열 화면 이름' } },
+      properties: { target: { type: 'string', description: 'Screen to open' } },
       required: ['target']
     },
     run: ({ target }) => {
       const key = String(target ?? '').trim()
       const cmd = SYSTEM_PANELS[key] ?? (/^ms-settings:[a-z0-9-]*$/i.test(key) ? key : null)
-      if (!cmd) return `알 수 없는 화면 "${key}". 가능: ${Object.keys(SYSTEM_PANELS).join(', ')}`
+      if (!cmd) return `Unknown screen "${key}". Available: ${Object.keys(SYSTEM_PANELS).join(', ')}`
       console.log(`[tool] open ${cmd}`)
       const child = spawn('cmd', ['/c', 'start', '""', cmd], { detached: true, stdio: 'ignore', windowsHide: true })
       child.on('error', () => {})
       child.unref()
-      return `${key} 열기 요청함`
+      return `${key} open requested`
     }
   },
   close_app: {
-    label: '앱/탭 닫기',
+    label: 'Closing app/tab',
     description:
-      '앱을 종료하거나, 웹사이트(유튜브 등)면 해당 브라우저 탭을 닫는다. target: 계산기, 메모장, 그림판, 유튜브, 네이버, 깃허브, gmail, 크롬 또는 프로세스 이름',
+      'Quits an app, or for a website (YouTube etc.) closes that browser tab. target: calculator, notepad, paint, youtube, naver, github, gmail, chrome, or a process name.',
     parameters: {
       type: 'object',
-      properties: { target: { type: 'string', description: '닫을 대상 이름' } },
+      properties: { target: { type: 'string', description: 'Name of what to close' } },
       required: ['target']
     },
     run: ({ target }) => {
       const t = String(target ?? '').trim().toLowerCase()
       let script
-      const sites = { 유튜브: 'YouTube', youtube: 'YouTube', 네이버: 'NAVER', naver: 'NAVER', 깃허브: 'GitHub', github: 'GitHub', 지메일: 'Gmail', gmail: 'Gmail', 구글: 'Google', google: 'Google' }
-      const procs = { 계산기: 'CalculatorApp,calc,Calculator', 메모장: 'notepad', 그림판: 'mspaint,mspaintapp', 크롬: 'chrome', chrome: 'chrome' }
+      const sites = { youtube: 'YouTube', naver: 'NAVER', github: 'GitHub', gmail: 'Gmail', google: 'Google' }
+      const procs = { calculator: 'CalculatorApp,calc,Calculator', calc: 'CalculatorApp,calc,Calculator', notepad: 'notepad', paint: 'mspaint,mspaintapp', chrome: 'chrome' }
       if (sites[t]) {
-        // 제목에 사이트명이 들어간 창을 활성화한 뒤 Ctrl+W로 탭을 닫는다
-        script = `$s=New-Object -ComObject WScript.Shell; if($s.AppActivate('${sites[t]}')){Start-Sleep -Milliseconds 400; $s.SendKeys('^w'); '${sites[t]} 탭 닫음'} else {'${sites[t]} 창을 찾지 못함'}`
+        // Activate the window whose title has the site name, then close the tab with Ctrl+W
+        script = `$s=New-Object -ComObject WScript.Shell; if($s.AppActivate('${sites[t]}')){Start-Sleep -Milliseconds 400; $s.SendKeys('^w'); '${sites[t]} tab closed'} else {'${sites[t]} window not found'}`
       } else {
         const names = procs[t] ?? (/^[\w.\- ]+$/.test(t) ? t.replace(/\.exe$/, '') : null)
-        if (!names) return `닫을 수 없는 대상 "${target}"`
-        script = `$p=Get-Process -Name ${names} -ErrorAction SilentlyContinue; if($p){$p | Stop-Process -Force; '종료함'} else {'실행 중인 프로세스 없음'}`
+        if (!names) return `Cannot close "${target}"`
+        script = `$p=Get-Process -Name ${names} -ErrorAction SilentlyContinue; if($p){$p | Stop-Process -Force; 'Terminated'} else {'No such process running'}`
       }
       console.log(`[tool] close ${t}`)
       return new Promise((done) => {
@@ -227,44 +384,44 @@ const TOOLS = {
           'powershell.exe',
           ['-NoProfile', '-EncodedCommand', Buffer.from(`[Console]::OutputEncoding=[Text.Encoding]::UTF8\n${script}`, 'utf16le').toString('base64')],
           { timeout: 10000, windowsHide: true },
-          (err, out) => done(err ? `닫기 실패: ${err.message.slice(0, 200)}` : out.trim())
+          (err, out) => done(err ? `Close failed: ${err.message.slice(0, 200)}` : out.trim())
         )
       })
     }
   },
   open_url: {
-    label: '웹페이지 열기',
+    label: 'Opening web page',
     description:
-      '기본 브라우저로 웹 주소(http/https)를 연다. 예: Gmail=https://mail.google.com. 열어서 내용을 확인해야 하면 wait_seconds를 주고, 이후 read_screen_text로 화면을 읽는다.',
+      'Opens a web address (http/https) in the default browser. For searches, build the results URL yourself (YouTube search=https://www.youtube.com/results?search_query=KEYWORD, Google search=https://www.google.com/search?q=KEYWORD). Gmail=https://mail.google.com. To check the page content, set wait_seconds and then read the screen with read_screen_text.',
     parameters: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'http 또는 https 주소' },
-        wait_seconds: { type: 'number', description: '로딩 대기 시간(0~15초)' }
+        url: { type: 'string', description: 'http or https address' },
+        wait_seconds: { type: 'number', description: 'Load wait time (0-15 seconds)' }
       },
       required: ['url']
     },
     run: async ({ url, wait_seconds }) => {
       const target = String(url ?? '').trim()
-      if (!/^https?:\/\/[^\s&|<>^"%]+$/i.test(target)) return `열 수 없는 주소 "${url}"`
+      if (!/^https?:\/\/[^\s&|<>^"%]+$/i.test(target)) return `Cannot open "${url}"`
       console.log(`[tool] open_url ${target}`)
       const child = spawn('cmd', ['/c', 'start', '""', target], { detached: true, stdio: 'ignore', windowsHide: true })
       child.on('error', () => {})
       child.unref()
       const wait = Math.min(Math.max(Number(wait_seconds) || 0, 0), 15)
       if (wait) await new Promise((r) => setTimeout(r, wait * 1000))
-      return `${target} 열었음`
+      return `${target} opened`
     }
   },
   volume: {
-    label: '볼륨 조절',
+    label: 'Adjusting volume',
     description:
-      '시스템 볼륨(0~100)을 조회하거나 조절한다. 인자 없이 호출하면 현재 볼륨만 반환한다. 절대값은 level, 상대 증감은 delta.',
+      'Reads or sets the system volume (0-100). Called with no arguments it only returns the current volume. Use level for an absolute value or delta for a relative change.',
     parameters: {
       type: 'object',
       properties: {
-        level: { type: 'number', description: '목표 볼륨 0~100' },
-        delta: { type: 'number', description: '현재 볼륨에 더할 값' }
+        level: { type: 'number', description: 'Target volume 0-100' },
+        delta: { type: 'number', description: 'Value to add to the current volume' }
       }
     },
     run: ({ level, delta }) => {
@@ -277,28 +434,28 @@ const TOOLS = {
           : ''
       const script = `[Console]::OutputEncoding=[Text.Encoding]::UTF8\n${AUDIO_SRC}\n$cur=[Math]::Round([Audio]::Get()*100)\n` +
         (change
-          ? `${change}\n$n=[Math]::Max(0,[Math]::Min(100,$n))\n[Audio]::Set($n/100)\nWrite-Output "볼륨 $cur -> $n"`
-          : 'Write-Output "현재 볼륨 $cur"')
+          ? `${change}\n$n=[Math]::Max(0,[Math]::Min(100,$n))\n[Audio]::Set($n/100)\nWrite-Output "Volume $cur -> $n"`
+          : 'Write-Output "Current volume $cur"')
       return new Promise((done) => {
         execFile(
           'powershell.exe',
           ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
           { timeout: 15000, windowsHide: true },
-          (err, out) => done(err ? `볼륨 조작 실패: ${err.message.slice(0, 200)}` : out.trim())
+          (err, out) => done(err ? `Volume operation failed: ${err.message.slice(0, 200)}` : out.trim())
         )
       })
     }
   },
   memory: {
-    label: '기억 저장/조회',
+    label: 'Accessing memory',
     description:
-      '사용자가 기억해 달라고 한 값을 디스크에 저장하고 나중에 꺼낸다. action: save(저장), get(한 항목 조회), list(전체), delete(삭제). 예: 현재 볼륨을 기억해달라고 하면 volume으로 현재 값을 조회한 뒤 key=volume, value=그 숫자로 save.',
+      'Saves a value the user asked to remember to disk, and recalls it later. action: save, get (one key), list (all), delete. Example: if asked to remember the current volume, read it with the volume tool, then save with key=volume and value=that number.',
     parameters: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['save', 'get', 'list', 'delete'] },
-        key: { type: 'string', description: '이름 (예: volume, brightness, 좋아하는_음식)' },
-        value: { type: 'string', description: 'save일 때 저장할 값' }
+        key: { type: 'string', description: 'Name (e.g. volume, brightness, favorite_food)' },
+        value: { type: 'string', description: 'Value to store when action is save' }
       },
       required: ['action']
     },
@@ -306,14 +463,14 @@ const TOOLS = {
       const k = String(key ?? '').trim()
       const notes = listNotes()
       if (action === 'list') return JSON.stringify(Object.fromEntries(Object.entries(notes).map(([n, v]) => [n, v.value])))
-      if (!k) return 'key가 필요함'
-      if (action === 'get') return notes[k] ? `${k}=${notes[k].value} (${notes[k].savedAt})` : '저장된 기억 없음'
-      if (action === 'delete') return deleteNote(k) ? `${k} 삭제함` : '저장된 기억 없음'
+      if (!k) return 'key is required'
+      if (action === 'get') return notes[k] ? `${k}=${notes[k].value} (${notes[k].savedAt})` : 'No such memory saved'
+      if (action === 'delete') return deleteNote(k) ? `${k} deleted` : 'No such memory saved'
       if (action === 'save') {
-        if (value == null || String(value).trim() === '') return 'value가 필요함'
-        return setNote(k, String(value)) ? `${k}=${value} 저장함` : '기억 저장 한도 초과'
+        if (value == null || String(value).trim() === '') return 'value is required'
+        return setNote(k, String(value)) ? `${k}=${value} saved` : 'Memory limit reached'
       }
-      return 'action은 save/get/list/delete 중 하나'
+      return 'action must be one of save/get/list/delete'
     }
   }
 }
@@ -322,22 +479,22 @@ export function getToolSpecs() {
   const enabled = getSettings().tools
   return Object.entries(TOOLS)
     .filter(([name]) => enabled[name])
-    .map(([name, t]) => ({ name, description: t.description, parameters: t.parameters }))
+    .map(([name, t]) => ({ name, description: t.description, parameters: t.parameters, examples: t.examples }))
 }
 
 // ctx: { confirm(message) => Promise<boolean>, onTool(label) }
 export async function runTool(name, args, ctx) {
   const tool = TOOLS[name]
   if (!tool || !getSettings().tools[name]) {
-    console.warn(`[tool] ${name} 사용 불가 (미정의 또는 권한 off)`)
-    return '사용할 수 없는 도구'
+    console.warn(`[tool] ${name} unavailable (undefined or disabled)`)
+    return 'Tool unavailable'
   }
   args = args && typeof args === 'object' ? args : {}
-  if (tool.confirm && !(await ctx.confirm(tool.describe(args)))) return '사용자가 거부함'
+  if (tool.confirm && !(await ctx.confirm(tool.describe(args)))) return 'Denied by the user'
   ctx.onTool(tool.label)
   try {
     return String(await tool.run(args))
   } catch (e) {
-    return `실패: ${e.message}`
+    return `Failed: ${e.message}`
   }
 }

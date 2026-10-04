@@ -1,26 +1,30 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; media-src blob:"
     />
     <title>Desktop Pet</title>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
-    <div id="settings" class="interactive hidden"></div>
-    <div id="confirm" class="interactive hidden">
-      <div id="confirm-msg"></div>
-      <button id="confirm-yes">허용</button>
-      <button id="confirm-no">거부</button>
+    <div id="stack">
+      <div id="settings" class="interactive hidden"></div>
+      <div id="confirm" class="interactive hidden">
+        <div id="confirm-msg"></div>
+        <button id="confirm-yes">Allow</button>
+        <button id="confirm-no">Deny</button>
+      </div>
+      <div id="bubble" class="interactive hidden"></div>
     </div>
-    <div id="bubble" class="interactive hidden"></div>
-    <div id="pet" class="interactive">🐶</div>
-    <button id="gear" class="interactive" title="도구 권한">⚙</button>
-    <form id="form" class="interactive">
-      <input id="input" autocomplete="off" placeholder="펫에게 말 걸기..." />
+    <div id="pet" class="interactive" aria-label="Rotating 3D pet">
+      <canvas id="pet-canvas" aria-label="Rotating 3D model"></canvas>
+    </div>
+    <form id="form" class="interactive away">
+      <input id="input" type="text" autocomplete="off" placeholder="Talk to your pet..." aria-label="Message your pet" />
+      <button id="send" type="submit" aria-label="Send message" title="Send message">&#8593;</button>
     </form>
     <script type="module" src="./src/main.js"></script>
   </body>

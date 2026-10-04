@@ -7,34 +7,90 @@ html, body {
   user-select: none;
 }
 body {
+  position: relative;
+}
+/* The pet sits at a fixed spot in a tall window so there is room above and below it */
+#pet {
+  position: absolute;
+  top: 266px;
+  left: 0;
+  right: 0;
+  width: 144px;
+  height: 144px;
+  margin-inline: auto;
+  cursor: pointer;
+}
+#pet-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+#form {
+  position: absolute;
+  top: 418px;
+  left: 0;
+  right: 0;
+  width: 204px;
+  height: 36px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  margin: 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 5px;
+  background: rgba(28, 28, 28, 0.94);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.28);
+  transition: border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease, transform 160ms ease;
+}
+#form:focus-within {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.22), 0 5px 16px rgba(0, 0, 0, 0.28);
+}
+/* Settings, confirm box and the speech text stack above the pet, or below when there is no room above */
+#stack {
+  position: absolute;
+  bottom: calc(100% - 284px);
+  left: 0;
+  right: 0;
+  width: max-content;
+  max-width: 340px;
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
-  padding-bottom: 12px;
+  transform: translateX(var(--shift, 0px));
 }
-#pet {
-  font-size: 96px;
-  cursor: pointer;
-  line-height: 1;
+#stack.below {
+  bottom: auto;
+  top: 440px;
 }
+#stack.below #bubble { max-height: 170px; }
+#stack.below #settings { max-height: 170px; overflow-y: auto; }
 #pet.bounce { animation: bounce 0.4s; }
 @keyframes bounce {
   50% { transform: translateY(-20px) scale(1.1); }
 }
 #bubble {
   max-width: 320px;
-  max-height: 240px;
+  max-height: 220px;
   overflow-y: auto;
-  background: #fff;
-  border: 2px solid #333;
-  border-radius: 14px;
-  padding: 10px 14px;
-  font-size: 14px;
-  line-height: 1.5;
+  scrollbar-width: none;
+  padding: 4px 8px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: center;
   white-space: pre-wrap;
   user-select: text;
+  /* White fill with a dark outline stays readable on any background */
+  color: #fff;
+  -webkit-text-stroke: 4px #111;
+  paint-order: stroke fill;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
 }
 .hidden { display: none !important; }
 #settings, #confirm {
@@ -44,21 +100,50 @@ body {
   padding: 8px 12px;
   font-size: 13px;
 }
+#settings { max-height: 270px; overflow-y: auto; }
 #settings label { display: block; }
 #confirm-msg { white-space: pre-wrap; margin-bottom: 6px; }
-#gear {
-  position: fixed;
-  top: 8px;
-  right: 8px;
-  border: 0;
-  background: #fff;
-  border-radius: 50%;
+#sleep {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #ddd;
+  color: #d00;
+  font-weight: bold;
   cursor: pointer;
 }
+#form.away { visibility: hidden; opacity: 0; transform: translateY(5px); }
 #input {
-  width: 260px;
-  padding: 8px 12px;
-  border: 2px solid #333;
-  border-radius: 16px;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 2px;
   outline: none;
+  background: transparent;
+  color: #f4f4f4;
+  font: inherit;
+  font-size: 13px;
+  user-select: text;
+}
+#input::placeholder { color: #a3a3a3; }
+#send {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: #ededed;
+  color: #202020;
+  font: 700 20px/1 'Malgun Gothic', sans-serif;
+  cursor: pointer;
+  transition: background 140ms ease, transform 140ms ease;
+}
+#send:hover { background: #fff; transform: translateY(-1px); }
+#send:active { transform: translateY(0) scale(0.94); }
+#send:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  #form, #send { transition: none; }
 }

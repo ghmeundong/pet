@@ -1,4 +1,4 @@
-const MAX_RECENT = 8 // 원문으로 유지할 최근 메시지 수
+const MAX_RECENT = 8 // number of recent messages kept verbatim
 const MAX_SUMMARY = 600
 
 let summary = ''
@@ -9,7 +9,7 @@ export function getMemory() {
   return { summary, recent: [...recent] }
 }
 
-// summarize(prevSummary, messages) => 새 요약. 오래된 대화는 백그라운드에서 요약에 합친다
+// summarize(prevSummary, messages) => new summary. Old turns are merged into it in the background
 export function addTurn(user, assistant, summarize) {
   recent.push({ role: 'user', content: user }, { role: 'assistant', content: assistant })
   if (recent.length <= MAX_RECENT) return

@@ -8,17 +8,35 @@ public class W{
 [DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,out int p);
 [DllImport("user32.dll",CharSet=CharSet.Unicode)]public static extern int GetWindowText(IntPtr h,StringBuilder s,int n);
+[DllImport("user32.dll")]public static extern IntPtr GetWindow(IntPtr h,uint c);
+[DllImport("user32.dll")]public static extern bool IsWindowVisible(IntPtr h);
 }
 "@
+function Info($h){
+  $id=0
+  [void][W]::GetWindowThreadProcessId($h,[ref]$id)
+  $sb=New-Object Text.StringBuilder 512
+  [void][W]::GetWindowText($h,$sb,512)
+  $p=Get-Process -Id $id -ErrorAction SilentlyContinue
+  @{app=$p.ProcessName;title=$sb.ToString()}
+}
 $h=[W]::GetForegroundWindow()
-$id=0
-[void][W]::GetWindowThreadProcessId($h,[ref]$id)
-$sb=New-Object Text.StringBuilder 512
-[void][W]::GetWindowText($h,$sb,512)
-$p=Get-Process -Id $id -ErrorAction SilentlyContinue
-@{app=$p.ProcessName;title=$sb.ToString()} | ConvertTo-Json -Compress
+$r=Info $h
+$n=0
+# If the pet window has focus, find the real window below it in Z-order
+while($r.app -match '^(electron|DesktopPet)$' -and $n -lt 60){
+  $h=[W]::GetWindow($h,2)
+  if($h -eq [IntPtr]::Zero){break}
+  if([W]::IsWindowVisible($h)){
+    $c=Info $h
+    if($c.title -and $c.app -notmatch '^(electron|DesktopPet|TextInputHost|SearchHost)$'){ $r=$c; break }
+  }
+  $n++
+}
+$r | ConvertTo-Json -Compress
 `
 const ENCODED = Buffer.from(SCRIPT, 'utf16le').toString('base64')
+const IGNORED_WINDOW = /click[\s._-]*todo/i
 
 export function readActiveWindow() {
   return new Promise((resolve) => {
@@ -29,7 +47,8 @@ export function readActiveWindow() {
       (err, stdout) => {
         if (err) return resolve(null)
         try {
-          resolve(JSON.parse(stdout.trim()))
+          const windowInfo = JSON.parse(stdout.trim())
+          resolve(IGNORED_WINDOW.test(`${windowInfo.app ?? ''} ${windowInfo.title ?? ''}`) ? null : windowInfo)
         } catch {
           resolve(null)
         }
@@ -40,7 +59,7 @@ export function readActiveWindow() {
 
 const SELF = /^(electron|desktoppet)$/i
 
-// 활성 창이 바뀌면 쿨다운을 지켜 콜백 호출
+// Call back when the active window changes, respecting the cooldown
 export function watchActiveWindow(onChange, { intervalMs = 5000, cooldownMs = 30000 } = {}) {
   let lastKey = ''
   let lastFired = 0

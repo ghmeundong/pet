@@ -37,7 +37,7 @@ export function deleteNote(key) {
   return had
 }
 
-// 시스템 프롬프트에 넣을 한 줄 요약
+// One-line digest for the system prompt
 export function notesPrompt() {
   const entries = Object.entries(load())
   return entries.length ? entries.map(([k, n]) => `${k}=${n.value}`).join(', ').slice(0, 800) : ''
