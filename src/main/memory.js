@@ -10,8 +10,11 @@ export function getMemory() {
 }
 
 // summarize(prevSummary, messages) => new summary. Old turns are merged into it in the background
-export function addTurn(user, assistant, summarize) {
-  recent.push({ role: 'user', content: user }, { role: 'assistant', content: assistant })
+export function addTurn(user, assistant, summarize, actions = []) {
+  recent.push(
+    { role: 'user', content: user },
+    { role: 'assistant', content: assistant, ...(actions.length ? { actions: [...actions] } : {}) }
+  )
   if (recent.length <= MAX_RECENT) return
   const overflow = recent.splice(0, recent.length - MAX_RECENT)
   queue = queue.then(async () => {

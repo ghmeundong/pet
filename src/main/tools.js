@@ -11,17 +11,6 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024
 const MAX_FILE_CHARS = 8000
 const APP_LAUNCH_COMMAND = /(?:^|[&|;]\s*)(?:start(?:\.exe)?\b|start-process\b|invoke-item\b)|\bcmd(?:\.exe)?\s+\/c\s+start\b|\bexplorer(?:\.exe)?\s+shell:AppsFolder\b|\bstart-process\b/i
 
-const APP_ALIASES = { calc: 'calculator', mspaint: 'paint' }
-
-// Short names -> names registered in the Start menu
-const APP_NAME_HINTS = {
-  battlenet: 'battle.net',
-  vscode: 'visual studio code',
-  code: 'visual studio code',
-  explorer: 'file explorer',
-  lol: 'league of legends'
-}
-
 // Installed-app catalog: Start menu apps, App Paths registry, shortcuts and system executables
 let catalog
 let catalogLoadedAt = 0
@@ -97,7 +86,7 @@ function dice(a, b) {
 }
 
 function score(query, name) {
-  const q = squash(APP_NAME_HINTS[squash(query)] ?? query)
+  const q = squash(query)
   const n = squash(name)
   if (!q || !n) return 0
   if (q === n) return 100
@@ -195,7 +184,7 @@ const TOOLS = {
   },
   launch_app: {
     label: 'Launching app',
-    description: 'Launches an installed app or program (including games and launchers) by name or path, e.g. notepad, calc, chrome, Battle.net, C:\\Windows\\notepad.exe. Use this as the only tool to start an app; do not start the same app again with a shell command. For websites (YouTube, Gmail, ...) use open_url instead.',
+    description: 'Launches an installed app or program by name or path. Use this as the only tool to start an app; do not start the same app again with a shell command. Use open_url for web addresses.',
     parameters: {
       type: 'object',
       properties: { app: { type: 'string', description: 'App name or path to launch' } },
@@ -205,7 +194,7 @@ const TOOLS = {
     run: async ({ app: raw }) => {
       const key = String(raw ?? '').trim()
       const lower = key.toLowerCase().replace(/\.exe$/, '')
-      const mapped = getSettings().allowedApps[APP_ALIASES[lower] ?? lower]
+      const mapped = getSettings().allowedApps[lower]
       const isPath = /[\\/]/.test(key) || /\.(exe|lnk)$/i.test(key)
       const start = (target) => {
         // Only block cmd metacharacters that would chain another command
@@ -300,7 +289,7 @@ const TOOLS = {
       { request: 'show free disk space on the C drive', args: { command: 'Get-PSDrive C | Select-Object Used,Free', shell: 'powershell' } },
       { request: 'list the files on my desktop', args: { command: 'dir "%USERPROFILE%\\Desktop"', shell: 'cmd' } },
       { request: 'kill all notepad processes', args: { command: 'taskkill /IM notepad.exe /F', shell: 'cmd' } },
-      { request: 'open a powershell window and ping google', args: { command: 'ping google.com', shell: 'powershell', visible: true } }
+      { request: 'open a powershell window and ping a host', args: { command: 'ping example.com', shell: 'powershell', visible: true } }
     ],
     describe: (a) => `Run this command?\n${a.command}`,
     run: ({ command, shell, visible }) => {
@@ -358,27 +347,20 @@ const TOOLS = {
   },
   close_app: {
     label: 'Closing app/tab',
-    description:
-      'Quits an app, or for a website (YouTube etc.) closes that browser tab. target: calculator, notepad, paint, youtube, naver, github, gmail, chrome, or a process name.',
+    description: 'Closes a matching app process, window, or browser tab by its process name, window title, or website domain.',
     parameters: {
       type: 'object',
       properties: { target: { type: 'string', description: 'Name of what to close' } },
       required: ['target']
     },
     run: ({ target }) => {
-      const t = String(target ?? '').trim().toLowerCase()
-      let script
-      const sites = { youtube: 'YouTube', naver: 'NAVER', github: 'GitHub', gmail: 'Gmail', google: 'Google' }
-      const procs = { calculator: 'CalculatorApp,calc,Calculator', calc: 'CalculatorApp,calc,Calculator', notepad: 'notepad', paint: 'mspaint,mspaintapp', chrome: 'chrome' }
-      if (sites[t]) {
-        // Activate the window whose title has the site name, then close the tab with Ctrl+W
-        script = `$s=New-Object -ComObject WScript.Shell; if($s.AppActivate('${sites[t]}')){Start-Sleep -Milliseconds 400; $s.SendKeys('^w'); '${sites[t]} tab closed'} else {'${sites[t]} window not found'}`
-      } else {
-        const names = procs[t] ?? (/^[\w.\- ]+$/.test(t) ? t.replace(/\.exe$/, '') : null)
-        if (!names) return `Cannot close "${target}"`
-        script = `$p=Get-Process -Name ${names} -ErrorAction SilentlyContinue; if($p){$p | Stop-Process -Force; 'Terminated'} else {'No such process running'}`
-      }
-      console.log(`[tool] close ${t}`)
+      const raw = String(target ?? '').trim()
+      const name = raw.replace(/^https?:\/\//i, '').replace(/^www\./i, '').split(/[/?#]/)[0]
+      if (!/^[\p{L}\p{N}._ -]+$/u.test(name)) return `Cannot close "${target}"`
+      const processName = name.replace(/\.exe$/i, '').replace(/'/g, "''")
+      const windowTitle = name.split('.')[0].replace(/'/g, "''")
+      const script = `$p=Get-Process -Name '${processName}' -ErrorAction SilentlyContinue; if($p){$p | Stop-Process -Force; 'Process terminated'} else {$s=New-Object -ComObject WScript.Shell; if($s.AppActivate('${windowTitle}')){Start-Sleep -Milliseconds 400; $s.SendKeys('^w'); 'Matching tab or window closed'} else {'No such process or matching window found'}}`
+      console.log(`[tool] close ${name}`)
       return new Promise((done) => {
         execFile(
           'powershell.exe',
@@ -392,7 +374,7 @@ const TOOLS = {
   open_url: {
     label: 'Opening web page',
     description:
-      'Opens a web address (http/https) in the default browser. For searches, build the results URL yourself (YouTube search=https://www.youtube.com/results?search_query=KEYWORD, Google search=https://www.google.com/search?q=KEYWORD). Gmail=https://mail.google.com. To check the page content, set wait_seconds and then read the screen with read_screen_text.',
+      'Opens an http or https address in the default browser. For web research, construct a search URL with the user query properly URL-encoded. To inspect the page, set wait_seconds and then use read_screen_text when enabled.',
     parameters: {
       type: 'object',
       properties: {
@@ -403,14 +385,20 @@ const TOOLS = {
     },
     run: async ({ url, wait_seconds }) => {
       const target = String(url ?? '').trim()
-      if (!/^https?:\/\/[^\s&|<>^"%]+$/i.test(target)) return `Cannot open "${url}"`
-      console.log(`[tool] open_url ${target}`)
-      const child = spawn('cmd', ['/c', 'start', '""', target], { detached: true, stdio: 'ignore', windowsHide: true })
+      let parsed
+      try {
+        parsed = new URL(target)
+      } catch {
+        return `Cannot open "${url}"`
+      }
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return `Cannot open "${url}"`
+      console.log(`[tool] open_url ${parsed.href}`)
+      const child = spawn('cmd', ['/c', 'start', '""', parsed.href], { detached: true, stdio: 'ignore', windowsHide: true })
       child.on('error', () => {})
       child.unref()
       const wait = Math.min(Math.max(Number(wait_seconds) || 0, 0), 15)
       if (wait) await new Promise((r) => setTimeout(r, wait * 1000))
-      return `${target} opened`
+      return `${parsed.href} opened`
     }
   },
   volume: {

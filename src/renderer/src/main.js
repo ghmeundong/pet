@@ -43,10 +43,14 @@ function stopSpeech() {
 }
 
 async function speak(text) {
-  if (!ttsEnabled || !text.trim()) return
+  const speechText = text
+    .replace(/(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?(?:\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?(?:\p{Emoji_Modifier})?)*)/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!ttsEnabled || !speechText) return
   const generation = ++speechGeneration
   try {
-    const encoded = await window.pet.synthesizeSpeech(text.trim().slice(0, 1500))
+    const encoded = await window.pet.synthesizeSpeech(speechText.slice(0, 1500))
     if (generation !== speechGeneration) return
     const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0))
     const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }))
@@ -343,14 +347,13 @@ function placeStack({ bounds, work }) {
   const freeBelow = work.y + work.height - (bounds.y + form.getBoundingClientRect().bottom)
   stack.classList.toggle('below', freeAbove < height + gap && freeBelow > freeAbove)
   const rect = stack.getBoundingClientRect()
-  const left = bounds.x + rect.left - stackShift
-  const right = left + rect.width
   const margin = 8
+  const viewportWidth = document.documentElement.clientWidth
   let shift = 0
-  if (left < work.x + margin) shift = work.x + margin - left
-  else if (right > work.x + work.width - margin) shift = work.x + work.width - margin - right
-  stackShift = shift
-  stack.style.setProperty('--shift', `${shift}px`)
+  if (rect.left < margin) shift = margin - rect.left
+  else if (rect.right > viewportWidth - margin) shift = viewportWidth - margin - rect.right
+  stackShift += shift
+  stack.style.setProperty('--shift', `${stackShift}px`)
 }
 
 window.pet.onCursor?.((p) => {
