@@ -2,3 +2,5 @@ node_modules
 out
 dist
 .env
+build/model-licenses/
+release/

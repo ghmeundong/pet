@@ -8,9 +8,12 @@
     "dev": "chcp 65001 >nul && electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "dist": "electron-vite build && electron-builder --win"
+    "icon:render": "electron scripts/render-icon.cjs",
+    "prepare:model-license": "node scripts/prepare-model-license.cjs",
+    "dist": "npm run prepare:model-license && npm run icon:render && electron-vite build && electron-builder --win --config.directories.output=release"
   },
   "dependencies": {
+    "@edyrkaj/openwakeword-wasm-browser": "^1.0.1",
     "@google/genai": "^1.0.0",
     "node-edge-tts": "^1.2.10",
     "tesseract.js": "^7.0.0",

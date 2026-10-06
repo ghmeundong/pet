@@ -1,4 +1,4 @@
-import { exec, execFile, spawn } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { readFile, stat } from 'fs/promises'
 import { homedir } from 'os'
 import { resolve } from 'path'
@@ -234,6 +234,7 @@ const TOOLS = {
       properties: { path: { type: 'string', description: 'File path' } },
       required: ['path']
     },
+    confirm: true,
     describe: (a) => `Read this file?\n${a.path}`,
     run: async ({ path }) => {
       const file = resolve(homedir(), String(path))
@@ -281,8 +282,13 @@ const TOOLS = {
       },
       required: ['command']
     },
+    confirm: true,
     examples: [
-      { request: 'what is my IP address', args: { command: 'ipconfig', shell: 'cmd' } },
+      { request: 'what is my IP address', args: { command: "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254*' } | ForEach-Object { '{0}: {1}' -f $_.InterfaceAlias,$_.IPAddress }", shell: 'powershell' } },
+      { request: 'what is my public IP address', args: { command: 'Invoke-RestMethod https://api.ipify.org', shell: 'powershell' } },
+      { request: 'what is my default gateway and DNS server', args: { command: 'Get-NetIPConfiguration | Select-Object InterfaceAlias,IPv4DefaultGateway,DNSServer', shell: 'powershell' } },
+      { request: 'is my Wi-Fi connected', args: { command: 'Get-NetConnectionProfile | Select-Object Name,InterfaceAlias,IPv4Connectivity', shell: 'powershell' } },
+      { request: 'what Windows version is this computer running', args: { command: 'Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber', shell: 'powershell' } },
       { request: 'show the 5 processes using the most memory', args: { command: 'Get-Process | Sort-Object WS -Descending | Select-Object -First 5 Name,WS', shell: 'powershell' } },
       { request: 'create a folder called test on the desktop', args: { command: 'mkdir "%USERPROFILE%\\Desktop\\test"', shell: 'cmd' } },
       { request: 'open a cmd window', args: { command: '', shell: 'cmd', visible: true } },
@@ -312,16 +318,20 @@ const TOOLS = {
       }
       return new Promise((done) => {
         const finish = (err, stdout, stderr) => {
-          const out = `${stdout}${stderr}`.trim().slice(0, MAX_FILE_CHARS)
-          done(err?.killed ? `Timed out (30s)\n${out}` : out || (err ? `Failed: ${err.message}` : '(no output)'))
+          const stdoutText = String(stdout ?? '').trim()
+          const stderrText = String(stderr ?? '').trim()
+          const out = `${stdoutText}${stdoutText && stderrText ? '\n' : ''}${stderrText}`.slice(0, MAX_FILE_CHARS)
+          const commandFailed = Boolean(err) || Boolean(stderrText)
+          done(err?.killed ? `Failed: timed out (30s)\n${out}` : commandFailed ? `Failed: ${out || err.message}` : out || '(no output)')
         }
-        const opts = { timeout: 30000, maxBuffer: 1024 * 1024, windowsHide: true }
+        const opts = { timeout: 30000, maxBuffer: 1024 * 1024, windowsHide: true, encoding: ps ? 'utf8' : 'buffer' }
         if (ps) {
           // Receive PowerShell output as UTF-8
           execFile('powershell.exe', ['-NoProfile', '-Command', `[Console]::OutputEncoding=[Text.Encoding]::UTF8; ${cmd}`], opts, finish)
         } else {
-          // chcp 65001 makes cmd output UTF-8
-          exec(`chcp 65001>nul && ${cmd}`, opts, finish)
+          execFile('cmd.exe', ['/d', '/u', '/s', '/c', cmd], opts, (err, stdout, stderr) => {
+            finish(err, Buffer.isBuffer(stdout) ? stdout.toString('utf16le') : stdout, Buffer.isBuffer(stderr) ? stderr.toString('utf16le') : stderr)
+          })
         }
       })
     }
@@ -334,6 +344,8 @@ const TOOLS = {
       properties: { target: { type: 'string', description: 'Screen to open' } },
       required: ['target']
     },
+    confirm: true,
+    describe: (a) => `Close "${a.target}"?`,
     run: ({ target }) => {
       const key = String(target ?? '').trim()
       const cmd = SYSTEM_PANELS[key] ?? (/^ms-settings:[a-z0-9-]*$/i.test(key) ? key : null)
@@ -468,6 +480,29 @@ export function getToolSpecs() {
   return Object.entries(TOOLS)
     .filter(([name]) => enabled[name])
     .map(([name, t]) => ({ name, description: t.description, parameters: t.parameters, examples: t.examples }))
+}
+
+export function validatePowerShellCommand(command) {
+  const sourceBase64 = Buffer.from(String(command), 'utf8').toString('base64')
+  const script = [
+    '[Console]::OutputEncoding=[Text.Encoding]::UTF8',
+    `$source=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${sourceBase64}'))`,
+    '$tokens=$null',
+    '$parseErrors=$null',
+    '[System.Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$parseErrors) | Out-Null',
+    'if($parseErrors.Count -gt 0){$parseErrors | ForEach-Object { Write-Output ("Line {0}: {1}" -f $_.Extent.StartLineNumber,$_.Message) }; exit 2}'
+  ].join('\n')
+  const encodedScript = Buffer.from(script, 'utf16le').toString('base64')
+  return new Promise((resolveValidation, rejectValidation) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedScript], {
+      timeout: 10000,
+      windowsHide: true,
+      encoding: 'utf8'
+    }, (error, stdout, stderr) => {
+      if (error) rejectValidation(new Error((stdout || stderr || error.message).trim()))
+      else resolveValidation()
+    })
+  })
 }
 
 // ctx: { confirm(message) => Promise<boolean>, onTool(label) }

@@ -1,0 +1,10 @@
+The Hey Jarvis wake-word model is from openWakeWord v0.5.1:
+https://github.com/dscripka/openWakeWord/releases/tag/v0.5.1
+
+The openWakeWord pretrained model files are licensed CC BY-NC-SA 4.0:
+https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+The openWakeWord source project is licensed Apache-2.0:
+https://github.com/dscripka/openWakeWord
+
+This bundled pretrained model detects the English phrase "Hey Jarvis" (not the standalone word "Jarvis"). Commercial redistribution may be restricted by the model license.

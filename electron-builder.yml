@@ -8,8 +8,25 @@ files:
 asarUnpack:
   - node_modules/tesseract.js/**
   - node_modules/tesseract.js-core/**
+  - node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm
+  - node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs
+extraResources:
+  - from: src/asset/openwakeword
+    to: wakeword
+    filter:
+      - "*.onnx"
+      - MODEL-NOTICE.txt
+  - from: src/asset/tesseract_prism/license.txt
+    to: licenses/tesseract-prism.txt
 win:
+  icon: build/icon.ico
   target: nsis
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  license: build/model-licenses/Qwen-Research-License.txt
+  include: build/installer.nsh
+  runAfterFinish: false
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico

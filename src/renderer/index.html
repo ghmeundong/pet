@@ -4,28 +4,31 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; media-src blob:"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self'; style-src 'self' 'unsafe-inline'; media-src blob:"
     />
     <title>Desktop Pet</title>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
-    <div id="stack">
-      <div id="settings" class="interactive hidden"></div>
-      <div id="confirm" class="interactive hidden">
-        <div id="confirm-msg"></div>
-        <button id="confirm-yes">Allow</button>
-        <button id="confirm-no">Deny</button>
+    <div id="ui-root">
+      <div id="stack">
+        <div id="settings" class="interactive hidden"></div>
+        <div id="confirm" class="interactive hidden">
+          <div id="confirm-msg"></div>
+          <button id="confirm-yes">Allow</button>
+          <button id="confirm-no">Deny</button>
+        </div>
+        <div id="bubble" class="interactive hidden"></div>
       </div>
-      <div id="bubble" class="interactive hidden"></div>
+      <div id="pet" class="interactive" aria-label="Rotating 3D pet">
+        <canvas id="pet-canvas" aria-label="Rotating 3D model"></canvas>
+      </div>
+      <form id="form" class="interactive away">
+        <div id="slash-suggestions" class="slash-suggestions hidden" role="listbox" aria-label="Slash commands"></div>
+        <input id="input" type="text" autocomplete="off" placeholder="Talk to your pet..." aria-label="Message your pet" />
+        <button id="send" type="submit" aria-label="Send message" title="Send message">&#8593;</button>
+      </form>
     </div>
-    <div id="pet" class="interactive" aria-label="Rotating 3D pet">
-      <canvas id="pet-canvas" aria-label="Rotating 3D model"></canvas>
-    </div>
-    <form id="form" class="interactive away">
-      <input id="input" type="text" autocomplete="off" placeholder="Talk to your pet..." aria-label="Message your pet" />
-      <button id="send" type="submit" aria-label="Send message" title="Send message">&#8593;</button>
-    </form>
     <script type="module" src="./src/main.js"></script>
   </body>
 </html>
