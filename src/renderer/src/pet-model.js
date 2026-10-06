@@ -76,13 +76,17 @@ export async function mountPetModel(canvas, { showcase = false } = {}) {
   let pulsePhase = 0
   let pulseCycle = -1
   let pulseAmplitude = 0.08
+  let thinking = false
+  let rotationMultiplier = 1
   let animationFrame
   const animate = (now) => {
     const delta = Math.min((now - previous) / 1000, 0.05)
     previous = now
-    tumble.rotation.x += delta * 0.29
-    tumble.rotation.y += delta * 0.43
-    tumble.rotation.z += delta * 0.17
+    const targetMultiplier = thinking ? 8.23 : 1
+    rotationMultiplier += (targetMultiplier - rotationMultiplier) * (1 - Math.exp(-delta * 8))
+    tumble.rotation.x += delta * 0.29 * rotationMultiplier
+    tumble.rotation.y += delta * 0.43 * rotationMultiplier
+    tumble.rotation.z += delta * 0.17 * rotationMultiplier
     if (pulsing) {
       pulsePhase += delta * 14
       const cycle = Math.floor(pulsePhase / Math.PI)
@@ -103,6 +107,10 @@ export async function mountPetModel(canvas, { showcase = false } = {}) {
   animationFrame = requestAnimationFrame(animate)
 
   return {
+    setThinking(active) {
+      thinking = active
+      if (!active) rotationMultiplier = 1
+    },
     setPulsing(active) {
       pulsing = active
     },

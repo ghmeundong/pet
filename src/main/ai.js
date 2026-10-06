@@ -80,6 +80,13 @@ function parseCmdCommand(text) {
   return { request, shellHint }
 }
 
+function parseChatCommand(text) {
+  const match = text.trim().match(/^\/chat(?:\s+([\s\S]*))?$/i)
+  if (!match) return null
+  const request = (match[1] ?? '').trim()
+  return request ? { request } : { error: 'Usage: /chat <message>' }
+}
+
 function parseUtilitySlashCommand(text) {
   const match = text.trim().match(/^\/(screen|read|panel|close)(?:\s+([\s\S]*))?$/i)
   if (!match) return null
@@ -93,16 +100,62 @@ function parseUtilitySlashCommand(text) {
     ? { tool: 'close_app', args: { target: value } }
     : { error: 'Usage: /close <app, window, or tab>' }
   if (!value) return { error: 'Usage: /panel <settings, wifi, bluetooth, task_manager, or another system panel>' }
-  const aliases = {
-    'task manager': 'task_manager',
-    'control panel': 'control_panel',
-    'device manager': 'device_manager',
-    'network connections': 'network_connections',
-    'programs and features': 'programs_and_features',
-    'windows update': 'windows_update'
+  return { tool: 'open_system_panel', args: { target: value } }
+}
+
+const PANEL_ALIASES = {
+  'task manager': 'task_manager',
+  taskmgr: 'task_manager',
+  'control panel': 'control_panel',
+  'device manager': 'device_manager',
+  'network connections': 'network_connections',
+  'programs and features': 'programs_and_features',
+  'windows update': 'windows_update',
+  'wi-fi': 'wifi',
+  'wi fi': 'wifi',
+  wireless: 'wifi',
+  'display settings': 'display',
+  'bluetooth settings': 'bluetooth',
+  'sound settings': 'sound',
+  'power settings': 'power',
+  'app settings': 'apps'
+}
+
+async function resolvePanelTarget(request, planner) {
+  if (/^ms-settings:[a-z0-9-]*$/i.test(request.trim())) return request.trim()
+  const normalized = request.trim().toLowerCase().replace(/[ _-]+/g, ' ')
+  const direct = PANEL_ALIASES[normalized] || normalized.replace(/ /g, '_')
+  const targets = ['task_manager', 'control_panel', 'device_manager', 'services', 'disk_management', 'registry_editor', 'network_connections', 'programs_and_features', 'sound', 'settings', 'display', 'wifi', 'bluetooth', 'apps', 'power', 'windows_update']
+  if (targets.includes(direct)) return direct
+
+  const schema = {
+    type: 'object',
+    properties: { target: { type: 'string', enum: [...targets, 'unknown'] } },
+    required: ['target']
   }
-  const target = aliases[value.toLowerCase()] || value.toLowerCase().replace(/[ -]+/g, '_')
-  return { tool: 'open_system_panel', args: { target } }
+  const messages = [
+    {
+      role: 'system',
+      content: `Interpret the user's request as the single Windows system panel they want to open. Understand Korean and English, including polite requests and action phrases. Return only the best matching target from this list: ${targets.join(', ')}. Return unknown if the request does not clearly refer to one of these panels.`
+    },
+    { role: 'user', content: request }
+  ]
+  const primary = planner === 'gemini' && gemini ? geminiJSON : ollamaJSON
+  try {
+    const result = await primary(messages, schema)
+    if (targets.includes(result?.target)) return result.target
+  } catch (error) {
+    console.warn('[panel] primary target interpretation failed:', error.message)
+  }
+  if (primary !== ollamaJSON) {
+    try {
+      const result = await ollamaJSON(messages, schema)
+      if (targets.includes(result?.target)) return result.target
+    } catch (error) {
+      console.warn('[panel] Ollama target interpretation failed:', error.message)
+    }
+  }
+  return null
 }
 
 function cleanInternalMarkers(text) {
@@ -516,6 +569,16 @@ export async function chat(text, kind, ctx) {
     if (utilityCommand.error) {
       reply = utilityCommand.error
     } else {
+      if (utilityCommand.tool === 'open_system_panel') {
+        const target = await resolvePanelTarget(utilityCommand.args.target, gemini ? 'gemini' : 'ollama')
+        if (target) utilityCommand.args.target = target
+        else utilityCommand.error = `I couldn't identify that system panel. Try /panel wifi, /panel display, /panel sound, or /panel task manager.`
+      }
+      if (utilityCommand.error) {
+        ctx.onChunk(utilityCommand.error)
+        addTurn(text, utilityCommand.error, summarize)
+        return
+      }
       const labels = {
         read_screen_text: 'Reading screen',
         read_file: 'Reading file',
@@ -532,13 +595,19 @@ export async function chat(text, kind, ctx) {
     return
   }
 
+  const chatCommand = userSubmitted ? parseChatCommand(text) : null
+  if (chatCommand?.error) {
+    ctx.onChunk(chatCommand.error)
+    addTurn(text, chatCommand.error, summarize)
+    return
+  }
   const cmdCommand = userSubmitted ? parseCmdCommand(text) : null
   if (cmdCommand?.error) {
     ctx.onChunk(cmdCommand.error)
     addTurn(text, cmdCommand.error, summarize)
     return
   }
-  const requestText = cmdCommand?.request ?? text
+  const requestText = chatCommand?.request ?? cmdCommand?.request ?? text
   const openCommand = userSubmitted ? parseOpenCommand(text) : null
   if (openCommand) {
     let reply
@@ -569,7 +638,10 @@ export async function chat(text, kind, ctx) {
   }
   let toolPlanner = 'gemini'
   let classification
-  if (cmdCommand) {
+  if (chatCommand) {
+    classification = { intent: 'chat', tools: [], request: requestText }
+    toolPlanner = 'ollama'
+  } else if (cmdCommand) {
     classification = {
       intent: 'action',
       tools: getToolSpecs().filter(({ name }) => name === 'run_command'),

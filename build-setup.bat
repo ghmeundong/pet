@@ -45,7 +45,10 @@ if not exist "%MODEL_MANIFEST%" (
 echo Building the app and Windows installer...
 echo First-run setup will install Ollama and download Qwen2.5 3B automatically.
 echo.
-call npm run dist
+set "DIST_DIR=release\build-%RANDOM%-%RANDOM%"
+call npm run dist:prepare
+if errorlevel 1 goto :failed
+call npm run dist:package -- --config.directories.output=%DIST_DIR%
 if errorlevel 1 goto :failed
 
 echo.
@@ -53,9 +56,9 @@ echo ========================================
 echo   Setup build completed successfully.
 echo ========================================
 echo.
-if exist "release\DesktopPet Setup 0.1.0.exe" (
-  echo Installer: %CD%\release\DesktopPet Setup 0.1.0.exe
-  start "" explorer.exe "%CD%\release"
+if exist "%DIST_DIR%\DesktopPet Setup 0.1.0.exe" (
+  echo Installer: %CD%\%DIST_DIR%\DesktopPet Setup 0.1.0.exe
+  start "" explorer.exe "%CD%\%DIST_DIR%"
 )
 echo.
 pause

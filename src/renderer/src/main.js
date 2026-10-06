@@ -17,12 +17,15 @@ const updatePetScale = () => uiRoot.style.setProperty('--pet-model-scale', Strin
 updatePetScale()
 let ttsPlaying = false
 let setPetPulsing = () => {}
+let setPetThinking = () => {}
 let hitTestPet = () => false
 mountPetModel(document.getElementById('pet-canvas'), { showcase: true })
   .then((model) => {
     setPetPulsing = model.setPulsing
+    setPetThinking = model.setThinking
     hitTestPet = model.hitTest
     setPetPulsing(ttsPlaying)
+    setPetThinking(busy)
   })
   .catch((error) => console.error('[pet-model] failed to load:', error))
 const form = document.getElementById('form')
@@ -33,6 +36,7 @@ const settingsEl = document.getElementById('settings')
 const stack = document.getElementById('stack')
 const slashSuggestions = document.getElementById('slash-suggestions')
 const SLASH_COMMANDS = [
+  { command: '/chat ', label: 'Chat without tools', detail: 'Answer directly without choosing or running tools.' },
   { command: '/open ', label: 'Open a website or app', detail: 'Try an exact URL or installed app name.' },
   { command: '/cmd ', label: 'Run a command', detail: 'Run cmd, or choose /cmd ps for PowerShell.' },
   { command: '/screen', label: 'Read screen', detail: 'Extract visible text from the screen.' },
@@ -86,6 +90,10 @@ function updateSlashSuggestions() {
 }
 
 input.addEventListener('keydown', (event) => {
+  if (busy && event.key === 'Enter') {
+    event.preventDefault()
+    return
+  }
   if (slashSuggestions.classList.contains('hidden')) return
   const options = [...slashSuggestions.querySelectorAll('.slash-option')]
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -124,6 +132,7 @@ let hideTimer
 let busy = false
 function setBusy(active) {
   busy = active
+  setPetThinking(active)
 }
 let statusShown = false
 let proactiveAttempt = 0
@@ -420,6 +429,7 @@ function ask(text, kind, selection = null) {
   window.pet.chat(text, kind, chatId, {
     onChunk: (c) => {
       if (activeChatId !== chatId) return
+      if (c) setPetThinking(false)
       replyText += c
       if (statusShown) {
         bubble.textContent = ''
@@ -783,6 +793,7 @@ document.addEventListener('mousemove', (e) => onPointer({ x: e.clientX, y: e.cli
 
 form.addEventListener('submit', (e) => {
   e.preventDefault()
+  if (busy) return
   const text = input.value.trim()
   if (!text) return
   input.value = ''

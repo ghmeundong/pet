@@ -8,7 +8,7 @@ const DEFAULTS = {
     ollamaUrl: 'http://127.0.0.1:11434',
     ollamaModel: 'qwen2.5:3b'
   },
-  tools: { get_active_window: true, read_screen_text: false, launch_app: false, read_file: false, run_command: false, set_brightness: true, open_system_panel: true, volume: true, memory: true, open_url: true, close_app: true },
+  tools: { get_active_window: true, read_screen_text: true, launch_app: true, read_file: true, run_command: true, set_brightness: true, open_system_panel: true, volume: true, memory: true, open_url: true, close_app: true },
   // App shortcuts: name the model uses -> executable (edit only in settings.json)
   allowedApps: { notepad: 'notepad.exe', calculator: 'calc.exe', paint: 'mspaint.exe' },
   readRoots: []

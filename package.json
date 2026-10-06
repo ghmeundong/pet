@@ -10,7 +10,9 @@
     "preview": "electron-vite preview",
     "icon:render": "electron scripts/render-icon.cjs",
     "prepare:model-license": "node scripts/prepare-model-license.cjs",
-    "dist": "npm run prepare:model-license && npm run icon:render && electron-vite build && electron-builder --win --config.directories.output=release"
+    "dist:prepare": "npm run prepare:model-license && npm run icon:render && electron-vite build",
+    "dist:package": "electron-builder --win",
+    "dist": "npm run dist:prepare && npm run dist:package -- --config.directories.output=release"
   },
   "dependencies": {
     "@edyrkaj/openwakeword-wasm-browser": "^1.0.1",
