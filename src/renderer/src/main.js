@@ -692,7 +692,12 @@ async function renderSettings() {
 petEl.addEventListener('contextmenu', (e) => {
   if (!hitTestPet(e.clientX, e.clientY)) return
   settingsEl.classList.toggle('hidden')
-  if (!settingsEl.classList.contains('hidden')) renderSettings()
+  if (!settingsEl.classList.contains('hidden')) {
+    settingsStackSide = null
+    renderSettings()
+  } else {
+    settingsStackSide = null
+  }
 })
 
 // The main process polls the global cursor, so this also works once the mouse has left the window
@@ -700,6 +705,8 @@ const NEAR_PX = 120
 const SETTINGS_MARGIN = 16
 const inside = (r, x, y, m = 0) => x >= r.left - m && x <= r.right + m && y >= r.top - m && y <= r.bottom + m
 let petHoveredOnce = false
+let settingsStackSide = null
+let lastCursorPosition = null
 
 function onPointer({ x, y }) {
   const pet = petEl.getBoundingClientRect()
@@ -713,9 +720,12 @@ function onPointer({ x, y }) {
     !element.classList.contains('hidden') && !(element === form && form.classList.contains('away')) && inside(element.getBoundingClientRect(), x, y)
   )
   setMouseIgnored(!overInteractive)
-  // The input shows near the pet and stays while it has focus or text
+  // Hide on pointer leave even if the input still has focus or contains a draft.
   if (near) form.classList.remove('away')
-  else if (document.activeElement !== input && !input.value) form.classList.add('away')
+  else {
+    form.classList.add('away')
+    if (document.activeElement === input) input.blur()
+  }
 
   // The settings panel hides once the mouse is away from both the pet and the panel
   if (!settingsEl.classList.contains('hidden')) {
@@ -726,19 +736,33 @@ function onPointer({ x, y }) {
       right: Math.max(pet.right, panel.right),
       bottom: Math.max(pet.bottom, panel.bottom)
     }
-    if (!inside(zone, x, y, SETTINGS_MARGIN * inputScale)) settingsEl.classList.add('hidden')
+    if (!inside(zone, x, y, SETTINGS_MARGIN * inputScale)) {
+      settingsEl.classList.add('hidden')
+      settingsStackSide = null
+    }
   }
 }
 
 // Polled global cursor (works outside the window); mousemove covers the case where polling is unavailable
 // Keep the stack on screen: flip it below the pet when there is no room above, and nudge it sideways at screen edges
 function placeStack({ bounds, work }) {
-  const height = stack.getBoundingClientRect().height
+  lastCursorPosition = { bounds, work }
+  const settingsOpen = !settingsEl.classList.contains('hidden')
+  const height = settingsOpen && settingsEl.scrollHeight
+    ? settingsEl.scrollHeight * inputScale
+    : stack.getBoundingClientRect().height
   if (!height) return
   const gap = 12 * inputScale
   const freeAbove = bounds.y + petEl.getBoundingClientRect().top - work.y
   const freeBelow = work.y + work.height - (bounds.y + form.getBoundingClientRect().bottom)
-  stack.classList.toggle('below', freeAbove < height + gap && freeBelow > freeAbove)
+  if (settingsOpen) {
+    if (settingsStackSide === null && settingsEl.childElementCount > 0) {
+      settingsStackSide = freeAbove < height + gap && freeBelow > freeAbove ? 'below' : 'above'
+    }
+    if (settingsStackSide !== null) stack.classList.toggle('below', settingsStackSide === 'below')
+  } else {
+    stack.classList.toggle('below', freeAbove < height + gap && freeBelow > freeAbove)
+  }
   const rect = stack.getBoundingClientRect()
   const margin = 8 * inputScale
   const viewportWidth = document.documentElement.clientWidth
