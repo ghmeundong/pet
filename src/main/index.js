@@ -144,7 +144,14 @@ async function pullOllamaModel(url) {
       const progress = JSON.parse(line)
       if (progress.error) throw new Error(progress.error)
       const percent = progress.total ? Math.floor(progress.completed * 100 / progress.total) : 0
-      setLocalModelStatus({ ready: false, phase: progress.status || 'Downloading Qwen2.5 3B', percent, error: '' })
+      setLocalModelStatus({
+        ready: false,
+        phase: progress.status || 'Downloading Qwen2.5 3B',
+        percent,
+        completedBytes: Number.isFinite(progress.completed) ? progress.completed : null,
+        totalBytes: Number.isFinite(progress.total) ? progress.total : null,
+        error: ''
+      })
     }
   }
   if (pending.trim()) {

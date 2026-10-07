@@ -28,6 +28,15 @@
         <input id="input" type="text" autocomplete="off" placeholder="Talk to your pet..." aria-label="Message your pet" />
         <button id="send" type="submit" aria-label="Send message" title="Send message">&#8593;</button>
       </form>
+      <section id="setup-status" class="hidden" role="status" aria-live="polite">
+        <div class="setup-card">
+          <strong>Setting up Desktop Pet</strong>
+          <span id="setup-phase">Preparing Ollama...</span>
+          <progress id="setup-progress"></progress>
+          <span id="setup-download-size" class="hidden"></span>
+          <span id="setup-error" class="hidden"></span>
+        </div>
+      </section>
     </div>
     <script type="module" src="./src/main.js"></script>
   </body>

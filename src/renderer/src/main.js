@@ -4,6 +4,21 @@ import { createWakeWordController } from './wake-word'
 const bubble = document.getElementById('bubble')
 const petEl = document.getElementById('pet')
 const uiRoot = document.getElementById('ui-root')
+const setupStatus = document.getElementById('setup-status')
+const setupPhase = document.getElementById('setup-phase')
+const setupProgress = document.getElementById('setup-progress')
+const setupDownloadSize = document.getElementById('setup-download-size')
+const setupError = document.getElementById('setup-error')
+const formatBytes = (bytes) => {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
+}
 const loadRangeSetting = (key, fallback, min, max) => {
   const stored = localStorage.getItem(key)
   const value = Number(stored)
@@ -194,11 +209,23 @@ window.pet.onWakeShortcutStatus((registered) => {
   wakeShortcutAvailable = registered === true
   if (!wakeShortcutAvailable) showVoiceStatus('Ctrl+Shift+Space is unavailable. Close other Desktop Pet instances and restart the app.')
 })
-window.pet.onLocalModelStatus(({ ready, phase, percent, error }) => {
+window.pet.onLocalModelStatus(({ ready, phase, percent, completedBytes, totalBytes, error }) => {
   if (ready) {
+    setupStatus.classList.add('hidden')
     showVoiceStatus('Qwen2.5 3B is ready. Jarvis is listening.')
     return
   }
+  setupStatus.classList.remove('hidden')
+  setupPhase.textContent = phase || 'Preparing Ollama...'
+  if (Number.isFinite(percent)) setupProgress.value = Math.max(0, Math.min(100, percent))
+  else setupProgress.removeAttribute('value')
+  const hasDownloadSize = Number.isFinite(completedBytes) && Number.isFinite(totalBytes) && totalBytes > 0
+  setupDownloadSize.classList.toggle('hidden', !hasDownloadSize)
+  setupDownloadSize.textContent = hasDownloadSize
+    ? `Current layer: ${formatBytes(completedBytes)} / ${formatBytes(totalBytes)}`
+    : ''
+  setupError.textContent = error || ''
+  setupError.classList.toggle('hidden', !error)
   const detail = error || `${phase || 'Preparing local model'}${Number.isFinite(percent) ? ` (${percent}%)` : ''}`
   showVoiceStatus(`Automatic setup: ${detail}`, 15000)
 })

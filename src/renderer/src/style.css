@@ -21,6 +21,39 @@ body {
 #ui-root.confirming #settings { visibility: hidden !important; }
 #ui-root.settings-open #bubble { display: none !important; }
 #ui-root.settings-positioning #settings { visibility: hidden; }
+#setup-status {
+  position: absolute;
+  z-index: 10;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: rgba(12, 15, 13, 0.88);
+  color: #f2f4f0;
+  font: 14px/1.5 'Segoe UI', sans-serif;
+  user-select: text;
+}
+#setup-status.hidden { display: none; }
+.setup-card {
+  display: grid;
+  width: min(320px, 100%);
+  gap: 12px;
+  padding: 20px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(28, 32, 29, 0.98);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
+}
+.setup-card strong { font-size: 17px; }
+.setup-card progress {
+  width: 100%;
+  height: 10px;
+  accent-color: #a8d0b6;
+}
+#setup-download-size { color: #c8d8cf; font-variant-numeric: tabular-nums; }
+#setup-error { color: #ffb3a9; overflow-wrap: anywhere; }
 #ui-root.confirming #stack {
   top: 50%;
   right: auto;
