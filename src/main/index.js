@@ -15,7 +15,7 @@ import { getSettings, setAISettings, setToolToggles } from './settings'
 import { warmUpAppCatalog } from './tools'
 import { captureSelectedText, insertTextAtTarget } from './selection'
 
-const WIDTH = 360
+const WIDTH = 440
 const HEIGHT = 800
 const WAKE_SHORTCUT = 'Control+Shift+Space'
 const DEFAULT_OLLAMA_MODEL = 'qwen2.5:3b'

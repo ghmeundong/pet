@@ -10,7 +10,7 @@ const loadRangeSetting = (key, fallback, min, max) => {
   return stored === null || !Number.isFinite(value) ? fallback : Math.min(max, Math.max(min, value))
 }
 let petScale = loadRangeSetting('petScale', 1, 0.6, 1.2)
-let inputScale = loadRangeSetting('inputScale', 1, 0.6, 1.4)
+let inputScale = loadRangeSetting('inputScale', 1, 0.6, 1.2)
 let masterVolume = loadRangeSetting('masterVolume', 1, 0, 1)
 uiRoot.style.setProperty('--ui-scale', String(inputScale))
 const updatePetScale = () => uiRoot.style.setProperty('--pet-model-scale', String(petScale / inputScale))
@@ -126,7 +126,20 @@ function focusInputFromPointer() {
 }
 
 form.addEventListener('pointerdown', focusInputFromPointer)
-input.addEventListener('focus', () => setMouseIgnored(false))
+input.addEventListener('focus', () => {
+  setMouseIgnored(false)
+  closeSettingsPanel()
+})
+
+function closeSettingsPanel() {
+  const wasOpen = !settingsEl.classList.contains('hidden')
+  settingsEl.classList.add('hidden')
+  uiRoot.classList.remove('settings-open', 'settings-positioning')
+  settingsStackSide = null
+  clearTimeout(settingsHideTimer)
+  settingsHideTimer = null
+  if (wasOpen && lastCursorPosition) placeStack(lastCursorPosition)
+}
 
 let hideTimer
 let busy = false
@@ -653,7 +666,7 @@ async function renderSettings() {
     petScale = value
     uiRoot.style.setProperty('--pet-model-scale', String(petScale / inputScale))
   })
-  const inputSizeSetting = createRangeSetting('Input size', 'inputScale', inputScale, 60, 140, (value) => `${Math.round(value * 100)}%`, (value) => {
+  const inputSizeSetting = createRangeSetting('Input size', 'inputScale', inputScale, 60, 120, (value) => `${Math.round(value * 100)}%`, (value) => {
     inputScale = value
     uiRoot.style.setProperty('--ui-scale', String(value))
     uiRoot.style.setProperty('--pet-model-scale', String(petScale / inputScale))
@@ -702,9 +715,9 @@ async function renderSettings() {
 // Right-click the pet to open or close the settings panel
 petEl.addEventListener('contextmenu', (e) => {
   if (!hitTestPet(e.clientX, e.clientY)) return
-  settingsEl.classList.toggle('hidden')
-  uiRoot.classList.toggle('settings-open', !settingsEl.classList.contains('hidden'))
-  if (!settingsEl.classList.contains('hidden')) {
+  if (settingsEl.classList.contains('hidden')) {
+    settingsEl.classList.remove('hidden')
+    uiRoot.classList.add('settings-open')
     settingsStackSide = null
     uiRoot.classList.add('settings-positioning')
     void renderSettings().then(() => {
@@ -713,8 +726,7 @@ petEl.addEventListener('contextmenu', (e) => {
       if (lastCursorPosition) placeStack(lastCursorPosition)
     })
   } else {
-    settingsStackSide = null
-    uiRoot.classList.remove('settings-positioning')
+    closeSettingsPanel()
   }
   clearTimeout(settingsHideTimer)
   settingsHideTimer = null
@@ -777,10 +789,7 @@ function onPointer({ x, y }) {
           bottom: Math.max(currentPet.bottom, currentPanel.bottom)
         }
         if (!inside(currentZone, lastPointerPosition.x, lastPointerPosition.y, SETTINGS_MARGIN * inputScale)) {
-          settingsEl.classList.add('hidden')
-          uiRoot.classList.remove('settings-open')
-          uiRoot.classList.remove('settings-positioning')
-          settingsStackSide = null
+          closeSettingsPanel()
         }
       }, SETTINGS_HIDE_DELAY_MS)
     }

@@ -21,6 +21,7 @@ const PERSONA =
 
 let gemini = null
 let geminiUnavailableUntil = 0
+let pendingScreenContext = ''
 const recentRemarks = []
 const READ_ONLY_TOOLS = new Set(['get_active_window', 'read_screen_text', 'read_file'])
 
@@ -549,7 +550,14 @@ async function agentOllama(text, ctx) {
   const messages = [
     { role: 'system', content: withSummary(`${PERSONA}${rule}${avoid}`) },
     ...getMemory().recent.map((turn) => ({ ...turn, content: cleanInternalMarkers(turn.content) })),
-    { role: 'user', content: done.length ? `${text}\n\n[Results]\n${done.join('\n')}` : text }
+    {
+      role: 'user',
+      content: [
+        text,
+        ctx.screenContext ? `[Screen text captured by /screen]\n${ctx.screenContext}` : '',
+        done.length ? `[Results]\n${done.join('\n')}` : ''
+      ].filter(Boolean).join('\n\n')
+    }
   ]
   console.info(`[status] final response: Ollama (${OLLAMA_MODEL})`)
   const reply = await ollamaTurn(messages, ctx.onChunk, casual ? 0.95 : 0.3, ctx.signal)
@@ -588,6 +596,9 @@ export async function chat(text, kind, ctx) {
       ctx.onTool(labels[utilityCommand.tool])
       const result = await runTool(utilityCommand.tool, utilityCommand.args, ctx)
       reply = result.slice(0, utilityCommand.tool === 'read_screen_text' || utilityCommand.tool === 'read_file' ? 1600 : 500)
+      if (utilityCommand.tool === 'read_screen_text') {
+        pendingScreenContext = result === '(no text recognized)' ? '' : result
+      }
       ctx.actions = [`${utilityCommand.tool}(${JSON.stringify(utilityCommand.args)}) -> ${reply}`]
     }
     ctx.onChunk(reply)
@@ -636,6 +647,8 @@ export async function chat(text, kind, ctx) {
     if (reply.trim()) addTurn(text, reply, summarize, ctx.actions)
     return
   }
+  const screenContext = userSubmitted ? pendingScreenContext : ''
+  if (screenContext) pendingScreenContext = ''
   let toolPlanner = 'gemini'
   let classification
   if (chatCommand) {
@@ -669,6 +682,7 @@ export async function chat(text, kind, ctx) {
   const wrapped = {
     ...ctx,
     kind,
+    screenContext,
     classification,
     toolPlanner,
     forceTool: cmdCommand ? 'run_command' : null,

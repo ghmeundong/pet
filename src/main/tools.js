@@ -345,7 +345,7 @@ const TOOLS = {
       required: ['target']
     },
     confirm: true,
-    describe: (a) => `Close "${a.target}"?`,
+    describe: (a) => `Open "${a.target}"?`,
     run: ({ target }) => {
       const key = String(target ?? '').trim()
       const cmd = SYSTEM_PANELS[key] ?? (/^ms-settings:[a-z0-9-]*$/i.test(key) ? key : null)
@@ -365,6 +365,8 @@ const TOOLS = {
       properties: { target: { type: 'string', description: 'Name of what to close' } },
       required: ['target']
     },
+    confirm: true,
+    describe: (a) => `Close "${a.target}"?`,
     run: ({ target }) => {
       const raw = String(target ?? '').trim()
       const name = raw.replace(/^https?:\/\//i, '').replace(/^www\./i, '').split(/[/?#]/)[0]
