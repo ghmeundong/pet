@@ -519,6 +519,7 @@ window.pet.onWakeShortcut((action = { mode: 'wake' }) => {
     ask(action.text.trim(), 'selection', action)
     return
   }
+  focusInputFromPointer()
   showVoiceStatus('Jarvis is awake and listening for "Hey Jarvis".')
 })
 
