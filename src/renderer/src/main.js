@@ -536,6 +536,7 @@ function ask(text, kind, selection = null) {
     hideTimer = setTimeout(() => bubble.classList.add('hidden'), 8000)
   }
   let replyText = ''
+  let toolsUsed = false
   window.pet.chat(text, kind, chatId, {
     onChunk: (c) => {
       if (activeChatId !== chatId) return
@@ -550,6 +551,7 @@ function ask(text, kind, selection = null) {
     },
     onTool: (label) => {
       if (activeChatId !== chatId) return
+      toolsUsed = true
       if (!bubble.textContent || statusShown) {
         bubble.textContent = `${label}...`
         statusShown = true
@@ -558,7 +560,7 @@ function ask(text, kind, selection = null) {
     onDone: async () => {
       if (activeChatId !== chatId) return
       const answer = replyText.trim()
-      if (kind === 'selection' && selection?.editable && answer) {
+      if (kind === 'selection' && selection?.editable && answer && !toolsUsed) {
         await window.pet.insertSelectionAnswer(selection.target, selection.runtimeId, answer).catch(() => false)
       }
       await speak(replyText)
