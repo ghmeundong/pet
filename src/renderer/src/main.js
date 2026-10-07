@@ -702,12 +702,21 @@ async function renderSettings() {
 petEl.addEventListener('contextmenu', (e) => {
   if (!hitTestPet(e.clientX, e.clientY)) return
   settingsEl.classList.toggle('hidden')
+  uiRoot.classList.toggle('settings-open', !settingsEl.classList.contains('hidden'))
   if (!settingsEl.classList.contains('hidden')) {
     settingsStackSide = null
-    renderSettings()
+    uiRoot.classList.add('settings-positioning')
+    void renderSettings().then(() => {
+      if (settingsEl.classList.contains('hidden')) return
+      uiRoot.classList.remove('settings-positioning')
+      if (lastCursorPosition) placeStack(lastCursorPosition)
+    })
   } else {
     settingsStackSide = null
+    uiRoot.classList.remove('settings-positioning')
   }
+  clearTimeout(settingsHideTimer)
+  settingsHideTimer = null
 })
 
 // The main process polls the global cursor, so this also works once the mouse has left the window
@@ -717,8 +726,13 @@ const inside = (r, x, y, m = 0) => x >= r.left - m && x <= r.right + m && y >= r
 let petHoveredOnce = false
 let settingsStackSide = null
 let lastCursorPosition = null
+let lastPointerPosition = null
+let settingsPointerDown = false
+let settingsHideTimer = null
+const SETTINGS_HIDE_DELAY_MS = 800
 
 function onPointer({ x, y }) {
+  lastPointerPosition = { x, y }
   const pet = petEl.getBoundingClientRect()
   const overPet = hitTestPet(x, y)
   if (overPet) petHoveredOnce = true
@@ -728,8 +742,8 @@ function onPointer({ x, y }) {
   const near = nearPet || inside(form.getBoundingClientRect(), x, y)
   const overInteractive = overPet || [form, bubble, settingsEl, confirmBox].some((element) =>
     !element.classList.contains('hidden') && !(element === form && form.classList.contains('away')) && inside(element.getBoundingClientRect(), x, y)
-  )
-  setMouseIgnored(!overInteractive)
+  ) || (settingsStackSide === 'below' && !settingsEl.classList.contains('hidden') && inside(stack.getBoundingClientRect(), x, y))
+  setMouseIgnored(!overInteractive && !settingsPointerDown)
   // Hide on pointer leave even if the input still has focus or contains a draft.
   if (near) form.classList.remove('away')
   else {
@@ -746,18 +760,47 @@ function onPointer({ x, y }) {
       right: Math.max(pet.right, panel.right),
       bottom: Math.max(pet.bottom, panel.bottom)
     }
-    if (!inside(zone, x, y, SETTINGS_MARGIN * inputScale)) {
-      settingsEl.classList.add('hidden')
-      settingsStackSide = null
+    if (settingsPointerDown || inside(zone, x, y, SETTINGS_MARGIN * inputScale)) {
+      clearTimeout(settingsHideTimer)
+      settingsHideTimer = null
+    } else if (settingsHideTimer === null) {
+      settingsHideTimer = setTimeout(() => {
+        settingsHideTimer = null
+        if (settingsEl.classList.contains('hidden') || settingsPointerDown || !lastPointerPosition) return
+        const currentPet = petEl.getBoundingClientRect()
+        const currentPanel = settingsEl.getBoundingClientRect()
+        const currentZone = {
+          left: Math.min(currentPet.left, currentPanel.left),
+          top: Math.min(currentPet.top, currentPanel.top),
+          right: Math.max(currentPet.right, currentPanel.right),
+          bottom: Math.max(currentPet.bottom, currentPanel.bottom)
+        }
+        if (!inside(currentZone, lastPointerPosition.x, lastPointerPosition.y, SETTINGS_MARGIN * inputScale)) {
+          settingsEl.classList.add('hidden')
+          uiRoot.classList.remove('settings-open')
+          uiRoot.classList.remove('settings-positioning')
+          settingsStackSide = null
+        }
+      }, SETTINGS_HIDE_DELAY_MS)
     }
   }
 }
+
+stack.addEventListener('mousedown', () => {
+  if (!settingsEl.classList.contains('hidden')) settingsPointerDown = true
+})
+document.addEventListener('mouseup', (event) => {
+  if (!settingsPointerDown) return
+  settingsPointerDown = false
+  onPointer({ x: event.clientX, y: event.clientY })
+})
 
 // Polled global cursor (works outside the window); mousemove covers the case where polling is unavailable
 // Keep the stack on screen: flip it below the pet when there is no room above, and nudge it sideways at screen edges
 function placeStack({ bounds, work }) {
   lastCursorPosition = { bounds, work }
   const settingsOpen = !settingsEl.classList.contains('hidden')
+  if (settingsOpen && uiRoot.classList.contains('settings-positioning')) return
   const height = settingsOpen && settingsEl.scrollHeight
     ? settingsEl.scrollHeight * inputScale
     : stack.getBoundingClientRect().height

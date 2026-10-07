@@ -16,7 +16,7 @@ import { warmUpAppCatalog } from './tools'
 import { captureSelectedText, insertTextAtTarget } from './selection'
 
 const WIDTH = 360
-const HEIGHT = 620
+const HEIGHT = 800
 const WAKE_SHORTCUT = 'Control+Shift+Space'
 const DEFAULT_OLLAMA_MODEL = 'qwen2.5:3b'
 const require = createRequire(import.meta.url)

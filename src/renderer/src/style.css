@@ -19,6 +19,8 @@ body {
 #ui-root.confirming #form,
 #ui-root.confirming #bubble,
 #ui-root.confirming #settings { visibility: hidden !important; }
+#ui-root.settings-open #bubble { display: none !important; }
+#ui-root.settings-positioning #settings { visibility: hidden; }
 #ui-root.confirming #stack {
   top: 50%;
   right: auto;
@@ -54,7 +56,7 @@ body {
   top: 418px;
   left: 0;
   right: 0;
-  width: 204px;
+  width: min(204px, calc((100vw - 16px) / var(--ui-scale, 1)));
   height: 36px;
   box-sizing: border-box;
   display: flex;
@@ -138,7 +140,6 @@ body {
 }
 #stack.below > * { flex-shrink: 0; }
 #stack.below #bubble { max-height: none; overflow: visible; }
-#stack.below #settings { max-height: none; overflow: visible; }
 #pet.bounce { animation: bounce 0.4s; }
 @keyframes bounce {
   50% { transform: translateY(-20px) scale(1.1); }
