@@ -30,10 +30,35 @@
       </form>
       <section id="setup-status" class="hidden" role="status" aria-live="polite">
         <div class="setup-card">
-          <strong>Setting up Desktop Pet</strong>
+          <strong>Installing Desktop Pet</strong>
+          <ol id="setup-steps">
+            <li id="setup-step-app" class="complete">
+              <span class="setup-step-state">Complete</span>
+              <strong>Desktop Pet app</strong>
+              <small>Installed from this setup package</small>
+            </li>
+            <li id="setup-step-ollama">
+              <span class="setup-step-state">Waiting</span>
+              <strong>Ollama</strong>
+              <small>Waiting to install</small>
+            </li>
+            <li id="setup-step-model">
+              <span class="setup-step-state">Waiting</span>
+              <strong>Qwen2.5 3B</strong>
+              <small>Waiting to download</small>
+            </li>
+          </ol>
           <span id="setup-phase">Preparing Ollama...</span>
-          <progress id="setup-progress"></progress>
+          <div class="setup-progress-row">
+            <progress id="setup-progress" max="100"></progress>
+            <span id="setup-overall-percent">--</span>
+          </div>
           <span id="setup-download-size" class="hidden"></span>
+          <ul id="setup-downloads" class="hidden"></ul>
+          <details id="setup-log-details" open>
+            <summary>Detailed setup log</summary>
+            <ol id="setup-log" role="log" aria-live="off"></ol>
+          </details>
           <span id="setup-error" class="hidden"></span>
         </div>
       </section>

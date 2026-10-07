@@ -7,8 +7,15 @@ const uiRoot = document.getElementById('ui-root')
 const setupStatus = document.getElementById('setup-status')
 const setupPhase = document.getElementById('setup-phase')
 const setupProgress = document.getElementById('setup-progress')
+const setupOverallPercent = document.getElementById('setup-overall-percent')
 const setupDownloadSize = document.getElementById('setup-download-size')
+const setupDownloads = document.getElementById('setup-downloads')
+const setupLog = document.getElementById('setup-log')
 const setupError = document.getElementById('setup-error')
+const setupSteps = {
+  ollama: document.getElementById('setup-step-ollama'),
+  model: document.getElementById('setup-step-model')
+}
 const formatBytes = (bytes) => {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let value = bytes
@@ -19,6 +26,7 @@ const formatBytes = (bytes) => {
   }
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
 }
+let renderedSetupLogCount = 0
 const loadRangeSetting = (key, fallback, min, max) => {
   const stored = localStorage.getItem(key)
   const value = Number(stored)
@@ -209,7 +217,20 @@ window.pet.onWakeShortcutStatus((registered) => {
   wakeShortcutAvailable = registered === true
   if (!wakeShortcutAvailable) showVoiceStatus('Ctrl+Shift+Space is unavailable. Close other Desktop Pet instances and restart the app.')
 })
-window.pet.onLocalModelStatus(({ ready, phase, percent, completedBytes, totalBytes, error }) => {
+window.pet.onLocalModelStatus(({ ready, stage, phase, percent, overallPercent, completedBytes, totalBytes, downloads = [], logs = [], error }) => {
+  const shouldFollowSetupLog = setupLog.scrollHeight - setupLog.scrollTop - setupLog.clientHeight < 24
+  const isInitialLogRender = renderedSetupLogCount === 0
+  if (logs.length < renderedSetupLogCount) {
+    setupLog.replaceChildren()
+    renderedSetupLogCount = 0
+  }
+  for (const entry of logs.slice(renderedSetupLogCount)) {
+    const line = document.createElement('li')
+    line.textContent = entry
+    setupLog.append(line)
+  }
+  renderedSetupLogCount = logs.length
+  if (logs.length && (shouldFollowSetupLog || isInitialLogRender)) setupLog.scrollTop = setupLog.scrollHeight
   if (ready) {
     setupStatus.classList.add('hidden')
     showVoiceStatus('Qwen2.5 3B is ready. Jarvis is listening.')
@@ -217,13 +238,62 @@ window.pet.onLocalModelStatus(({ ready, phase, percent, completedBytes, totalByt
   }
   setupStatus.classList.remove('hidden')
   setupPhase.textContent = phase || 'Preparing Ollama...'
-  if (Number.isFinite(percent)) setupProgress.value = Math.max(0, Math.min(100, percent))
+  if (Number.isFinite(overallPercent)) setupProgress.value = Math.max(0, Math.min(100, overallPercent))
   else setupProgress.removeAttribute('value')
+  setupOverallPercent.textContent = Number.isFinite(overallPercent) ? `${Math.round(overallPercent)}%` : '--'
   const hasDownloadSize = Number.isFinite(completedBytes) && Number.isFinite(totalBytes) && totalBytes > 0
   setupDownloadSize.classList.toggle('hidden', !hasDownloadSize)
   setupDownloadSize.textContent = hasDownloadSize
-    ? `Current layer: ${formatBytes(completedBytes)} / ${formatBytes(totalBytes)}`
+    ? `Current download: ${formatBytes(completedBytes)} / ${formatBytes(totalBytes)}`
     : ''
+  const stageIsComplete = (step) => stage === 'complete' || (step === 'ollama' && stage === 'model')
+  for (const [step, element] of Object.entries(setupSteps)) {
+    const state = error && stage === step
+      ? 'Failed'
+      : stageIsComplete(step) || (step === 'ollama' && phase === 'Ollama already installed')
+        ? 'Complete'
+        : stage === step
+          ? 'In progress'
+          : 'Waiting'
+    element.classList.toggle('complete', state === 'Complete')
+    element.classList.toggle('active', state === 'In progress')
+    element.classList.toggle('failed', state === 'Failed')
+    element.querySelector('.setup-step-state').textContent = state
+    const detail = element.querySelector('small')
+    if (step === 'ollama' && stage === step) {
+      detail.textContent = phase || 'Preparing Ollama'
+    } else if (step === 'model' && stage === step) {
+      detail.textContent = phase || 'Preparing Qwen2.5 3B'
+    } else if (step === 'ollama' && state === 'Complete') {
+      detail.textContent = 'Installed and ready'
+    } else if (step === 'model' && state === 'Complete') {
+      detail.textContent = 'Downloaded and ready'
+    } else if (state === 'Waiting') {
+      detail.textContent = step === 'ollama' ? 'Waiting to install' : 'Waiting to download'
+    }
+  }
+  setupDownloads.replaceChildren()
+  setupDownloads.classList.toggle('hidden', downloads.length === 0)
+  for (const download of downloads) {
+    const item = document.createElement('li')
+    item.className = 'setup-download-item'
+    const name = document.createElement('strong')
+    name.textContent = download.name || 'Download file'
+    const file = document.createElement('small')
+    file.textContent = `File: ${download.file || download.name || 'Unknown'}`
+    const details = document.createElement('small')
+    details.textContent = Number.isFinite(download.totalBytes) && download.totalBytes > 0
+      ? `${download.status || 'Downloading'} · ${formatBytes(download.completedBytes || 0)} / ${formatBytes(download.totalBytes)}`
+      : `${download.status || 'Downloading'} · Total size unavailable`
+    item.append(name, file, details)
+    if (Number.isFinite(download.totalBytes) && download.totalBytes > 0) {
+      const progressBar = document.createElement('progress')
+      progressBar.max = 100
+      progressBar.value = Math.min(100, (download.completedBytes || 0) * 100 / download.totalBytes)
+      item.append(progressBar)
+    }
+    setupDownloads.append(item)
+  }
   setupError.textContent = error || ''
   setupError.classList.toggle('hidden', !error)
   const detail = error || `${phase || 'Preparing local model'}${Number.isFinite(percent) ? ` (${percent}%)` : ''}`

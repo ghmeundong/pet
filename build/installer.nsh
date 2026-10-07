@@ -13,6 +13,17 @@ Var InstallerGeminiKey
   !undef MUI_PAGE_HEADER_SUBTEXT
 !macroend
 
+!macro customInstall
+  SetDetailsView show
+  DetailPrint "Installing Ollama and downloading Qwen2.5 3B..."
+  nsExec::ExecToLog /TIMEOUT=2700000 '"$appExe" --installer-setup'
+  Pop $0
+  ${If} $0 != 0
+    MessageBox MB_ICONSTOP|MB_OK "AI setup failed. Review the installer details for more information."
+    Abort
+  ${EndIf}
+!macroend
+
 Function DesktopPetSettingsPage
   nsDialogs::Create 1018
   Pop $0
@@ -25,7 +36,7 @@ Function DesktopPetSettingsPage
   ${NSD_CreatePassword} 0 32u 100% 14u ""
   Pop $GeminiKeyInput
 
-  ${NSD_CreateLabel} 0 62u 100% 64u "On first launch, Desktop Pet automatically installs Ollama and downloads the Qwen2.5 3B model. Internet is required for this one-time setup. Allow about 5 GB of free disk space. Qwen is licensed for non-commercial use; the license is included with this installer."
+  ${NSD_CreateLabel} 0 62u 100% 64u "During installation, Desktop Pet installs Ollama and downloads the Qwen2.5 3B model. Internet is required. Allow about 5 GB of free disk space. Qwen is licensed for non-commercial use; the license is included with this installer."
   Pop $0
 
   nsDialogs::Show

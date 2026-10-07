@@ -43,7 +43,7 @@ if not exist "%MODEL_MANIFEST%" (
 )
 
 echo Building the app and Windows installer...
-echo First-run setup will install Ollama and download Qwen2.5 3B automatically.
+echo The installer will install Ollama and download Qwen2.5 3B during setup.
 echo.
 set "DIST_DIR=release\build-%RANDOM%-%RANDOM%"
 call npm run dist:prepare

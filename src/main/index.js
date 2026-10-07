@@ -21,6 +21,7 @@ const WAKE_SHORTCUT = 'Control+Shift+Space'
 const DEFAULT_OLLAMA_MODEL = 'qwen2.5:3b'
 const require = createRequire(import.meta.url)
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
+const installerSetupOnly = process.argv.includes('--installer-setup')
 const wakeModelFiles = new Set([
   'embedding_model.onnx',
   'hey_jarvis_v0.1.onnx',
@@ -44,10 +45,19 @@ let wakeShortcutRegistered = false
 let wakeAssetServer
 let wakeAssetBaseUrl = ''
 let ollamaProcess
+const localModelLogMessages = new Set()
+let lastInstallerProgressPercent = -1
+let setupDownloadBytes = {
+  ollamaCompleted: 0,
+  ollamaTotal: null,
+  modelCompleted: 0,
+  modelTotal: null
+}
 let localModelStatus = {
   ready: !app.isPackaged,
   phase: app.isPackaged ? 'Preparing local language model' : '',
-  error: ''
+  error: '',
+  logs: []
 }
 
 function findAvailablePort() {
@@ -62,8 +72,43 @@ function findAvailablePort() {
 }
 
 function setLocalModelStatus(status) {
-  localModelStatus = status
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('local-model:status', status)
+  const overallPercent = getOverallDownloadProgress()
+  localModelStatus = {
+    ...localModelStatus,
+    ...status,
+    overallPercent,
+    logs: status.logs ?? localModelStatus.logs ?? []
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('local-model:status', localModelStatus)
+  if (installerSetupOnly && Number.isFinite(overallPercent)) {
+    const roundedPercent = Math.floor(overallPercent / 5) * 5
+    if (roundedPercent > lastInstallerProgressPercent) {
+      lastInstallerProgressPercent = roundedPercent
+      process.stdout.write(`[setup] Overall download progress: ${roundedPercent}%\n`)
+    }
+  }
+}
+
+function logLocalModel(message) {
+  if (localModelLogMessages.has(message)) return
+  localModelLogMessages.add(message)
+  const timestamp = new Date().toISOString().slice(11, 19)
+  const entry = `${timestamp}  ${message}`
+  const logs = [...(localModelStatus.logs ?? []), entry]
+  setLocalModelStatus({ logs, message })
+  if (installerSetupOnly) process.stdout.write(`${toInstallerText(entry)}\n`)
+}
+
+function getOverallDownloadProgress() {
+  const { ollamaCompleted, ollamaTotal, modelCompleted, modelTotal } = setupDownloadBytes
+  if (ollamaTotal === null || modelTotal === null) return null
+  const total = ollamaTotal + modelTotal
+  if (total === 0) return 100
+  return Math.min(100, Math.floor((ollamaCompleted + modelCompleted) * 100 / total))
+}
+
+function toInstallerText(value) {
+  return String(value ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, '?')
 }
 
 function findInstalledOllama() {
@@ -125,6 +170,33 @@ async function isOllamaAvailable(url) {
   }
 }
 
+async function getOllamaInstallerSize() {
+  try {
+    const response = await fetch('https://ollama.com/download/OllamaSetup.exe', {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(10000)
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const length = Number(response.headers.get('content-length'))
+    return Number.isFinite(length) && length > 0 ? length : null
+  } catch (error) {
+    console.warn('[local-model] could not determine Ollama installer size:', error.message)
+    return null
+  }
+}
+
+async function getQwenModelSize() {
+  const response = await fetch('https://registry.ollama.ai/v2/library/qwen2.5/manifests/3b', {
+    headers: { Accept: 'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' },
+    signal: AbortSignal.timeout(10000)
+  })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const manifest = await response.json()
+  const total = manifest.layers?.reduce((sum, layer) => sum + (Number.isFinite(layer.size) ? layer.size : 0), 0)
+  if (!total) throw new Error('The Qwen model size was not available.')
+  return total
+}
+
 async function pullOllamaModel(url) {
   const response = await fetch(`${url}/api/pull`, {
     method: 'POST',
@@ -134,6 +206,8 @@ async function pullOllamaModel(url) {
   if (!response.ok || !response.body) throw new Error(`Model download failed (HTTP ${response.status}).`)
 
   const decoder = new TextDecoder()
+  const layers = new Map()
+  let lastModelStatus = ''
   let pending = ''
   for await (const chunk of response.body) {
     pending += decoder.decode(chunk, { stream: true })
@@ -143,13 +217,50 @@ async function pullOllamaModel(url) {
       if (!line.trim()) continue
       const progress = JSON.parse(line)
       if (progress.error) throw new Error(progress.error)
-      const percent = progress.total ? Math.floor(progress.completed * 100 / progress.total) : 0
+      if (progress.digest) {
+        const digest = String(progress.digest)
+        const layer = layers.get(digest) ?? {
+          id: digest,
+          name: `Qwen2.5 3B layer ${layers.size + 1}`,
+          file: digest.replace(':', '-'),
+          loggedStatus: ''
+        }
+        if (Number.isFinite(progress.completed)) layer.completedBytes = progress.completed
+        if (Number.isFinite(progress.total)) layer.totalBytes = progress.total
+        layer.status = progress.completed >= progress.total ? 'Complete' : progress.status || 'Downloading'
+        if (layer.status !== layer.loggedStatus) {
+          logLocalModel(`${layer.name} (${layer.file}): ${layer.status}${layer.totalBytes ? `, ${formatProgressBytes(layer.completedBytes ?? 0)} / ${formatProgressBytes(layer.totalBytes)}` : ''}`)
+          layer.loggedStatus = layer.status
+        }
+        layers.set(digest, layer)
+      }
+      const layerList = [...layers.values()]
+      const completedBytes = layerList.reduce((sum, layer) => sum + (layer.completedBytes ?? 0), 0)
+      const totalBytes = layerList.reduce((sum, layer) => sum + (layer.totalBytes ?? 0), 0)
+      setupDownloadBytes.modelCompleted = completedBytes
+      if (totalBytes) setupDownloadBytes.modelTotal = totalBytes
+      const percent = totalBytes ? Math.floor(completedBytes * 100 / totalBytes) : null
+      const phase = progress.digest
+        ? 'Downloading Qwen2.5 3B files'
+        : progress.status === 'success'
+          ? 'Qwen2.5 3B downloaded'
+          : progress.status === 'verifying sha256'
+            ? 'Verifying model files'
+            : progress.status === 'writing manifest'
+              ? 'Registering Qwen2.5 3B'
+              : progress.status || 'Preparing Qwen2.5 3B download'
+      if (!progress.digest && progress.status && progress.status !== lastModelStatus) {
+        logLocalModel(`Model setup: ${progress.status}`)
+        lastModelStatus = progress.status
+      }
       setLocalModelStatus({
         ready: false,
-        phase: progress.status || 'Downloading Qwen2.5 3B',
+        stage: 'model',
+        phase,
         percent,
-        completedBytes: Number.isFinite(progress.completed) ? progress.completed : null,
-        totalBytes: Number.isFinite(progress.total) ? progress.total : null,
+        completedBytes,
+        totalBytes: totalBytes || null,
+        downloads: layerList,
         error: ''
       })
     }
@@ -160,17 +271,110 @@ async function pullOllamaModel(url) {
   }
 }
 
+function formatProgressBytes(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
+}
+
+function updateOllamaInstallerProgress(line, installerDownload, installerSize) {
+  const detail = line.trim()
+  if (!detail) return
+  const installStarted = /installing ollama/i.test(detail)
+  const percentMatch = detail.match(/(\d+(?:\.\d+)?)%/)
+  const percent = percentMatch ? Math.min(100, Math.max(0, Number(percentMatch[1]))) : null
+  const nextStatus = installStarted ? 'Installing' : percent === null ? '' : 'Downloading'
+  if (nextStatus && installerDownload.status !== nextStatus) {
+    installerDownload.status = nextStatus
+    logLocalModel(`Ollama installer: ${nextStatus.toLowerCase()}.`)
+  }
+  if (!installStarted && percent === null) return
+  const completedBytes = percent === null || installerSize === null
+    ? installerDownload.completedBytes
+    : Math.floor(installerSize * percent / 100)
+  if (completedBytes !== null) installerDownload.completedBytes = completedBytes
+  setupDownloadBytes.ollamaCompleted = completedBytes ?? 0
+  setLocalModelStatus({
+    ready: false,
+    stage: 'ollama',
+    phase: installStarted ? 'Installing Ollama' : 'Downloading OllamaSetup.exe',
+    percent,
+    completedBytes: installerDownload.completedBytes,
+    totalBytes: installerSize,
+    downloads: [{ ...installerDownload }],
+    error: ''
+  })
+}
+
 async function prepareLocalModel() {
-  setLocalModelStatus({ ready: false, phase: 'Preparing Ollama', error: '' })
+  setupDownloadBytes = { ollamaCompleted: 0, ollamaTotal: null, modelCompleted: 0, modelTotal: null }
+  setLocalModelStatus({ ready: false, stage: 'ollama', phase: 'Checking Ollama installation', error: '', logs: [], setupState: 'running' })
+  logLocalModel('Desktop Pet application files are installed.')
+  logLocalModel('Checking whether Ollama is already installed.')
   let ollamaExecutable = findInstalledOllama()
   if (!ollamaExecutable) {
-    setLocalModelStatus({ ready: false, phase: 'Installing Ollama automatically', error: '' })
+    logLocalModel('Ollama is not installed. Preparing the official Windows installer download.')
+    const [installerSize, modelSize] = await Promise.all([
+      getOllamaInstallerSize(),
+      getQwenModelSize().catch((error) => {
+        console.warn('[local-model] could not determine Qwen model size:', error.message)
+        return null
+      })
+    ])
+    setupDownloadBytes = { ollamaCompleted: 0, ollamaTotal: installerSize, modelCompleted: 0, modelTotal: modelSize }
+    logLocalModel(installerSize ? `OllamaSetup.exe size: ${formatProgressBytes(installerSize)}.` : 'OllamaSetup.exe size could not be determined by the download server.')
+    logLocalModel(modelSize ? `Qwen2.5 3B download size: ${formatProgressBytes(modelSize)}.` : 'Qwen2.5 3B download size is not available yet.')
+    const installerDownload = {
+      id: 'ollama-installer',
+      name: 'OllamaSetup.exe',
+      completedBytes: 0,
+      totalBytes: installerSize,
+      status: 'Preparing'
+    }
+    setLocalModelStatus({
+      ready: false,
+      stage: 'ollama',
+      phase: 'Downloading OllamaSetup.exe',
+      downloads: [installerDownload],
+      error: ''
+    })
+    let installerOutputPending = ''
     await runHiddenProcess('powershell.exe', [
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-      '-Command', "$ProgressPreference='SilentlyContinue'; irm 'https://ollama.com/install.ps1' | iex"
-    ])
+      '-Command', "$env:OLLAMA_DEBUG='1'; $ProgressPreference='SilentlyContinue'; irm 'https://ollama.com/install.ps1' | iex"
+    ], {
+      onOutput: (output) => {
+        installerOutputPending += output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+        const lines = installerOutputPending.split(/[\r\n]+/)
+        installerOutputPending = lines.pop() ?? ''
+        for (const line of lines) updateOllamaInstallerProgress(line, installerDownload, installerSize)
+      }
+    })
+    updateOllamaInstallerProgress(installerOutputPending, installerDownload, installerSize)
+    logLocalModel('Ollama installer download and installation process finished.')
+    installerDownload.status = 'Complete'
+    setupDownloadBytes.ollamaCompleted = installerSize ?? 0
+    setLocalModelStatus({
+      ready: false,
+      stage: 'ollama',
+      phase: 'Ollama installed',
+      percent: 100,
+      completedBytes: installerSize,
+      totalBytes: installerSize,
+      downloads: [{ ...installerDownload }],
+      error: ''
+    })
     ollamaExecutable = findInstalledOllama()
     if (!ollamaExecutable) throw new Error('Ollama installer finished but ollama.exe was not found.')
+  } else {
+    setupDownloadBytes = { ollamaCompleted: 0, ollamaTotal: 0, modelCompleted: 0, modelTotal: null }
+    logLocalModel(`Ollama is already installed at ${ollamaExecutable}.`)
+    setLocalModelStatus({ ready: false, stage: 'ollama', phase: 'Ollama already installed', error: '' })
   }
 
   let url = 'http://127.0.0.1:11434'
@@ -178,6 +382,7 @@ async function prepareLocalModel() {
   try {
     tags = await waitForOllama(url, 3000)
   } catch {
+    logLocalModel('No Ollama server is responding. Starting a local Ollama server for model setup.')
     const port = await findAvailablePort()
     url = `http://127.0.0.1:${port}`
     const ollamaRoot = require('path').dirname(ollamaExecutable)
@@ -189,10 +394,23 @@ async function prepareLocalModel() {
     })
     tags = await waitForOllama(url)
   }
+  logLocalModel('Ollama server is ready.')
 
   if (!tags.models?.some(({ name }) => name === DEFAULT_OLLAMA_MODEL)) {
-    setLocalModelStatus({ ready: false, phase: 'Downloading Qwen2.5 3B', percent: 0, error: '' })
+    if (setupDownloadBytes.modelTotal === null) {
+      setupDownloadBytes.modelTotal = await getQwenModelSize().catch((error) => {
+        console.warn('[local-model] could not determine Qwen model size:', error.message)
+        return null
+      })
+    }
+    logLocalModel(`Qwen2.5 3B is not installed. Starting model download from ${url}.`)
+    setLocalModelStatus({ ready: false, stage: 'model', phase: 'Preparing Qwen2.5 3B download', percent: 0, downloads: [], error: '' })
     await pullOllamaModel(url)
+    logLocalModel('Qwen2.5 3B model download and verification finished.')
+  } else {
+    setupDownloadBytes.modelCompleted = 0
+    setupDownloadBytes.modelTotal = 0
+    logLocalModel('Qwen2.5 3B is already installed; skipping model download.')
   }
 
   const savedAI = setAISettings({
@@ -201,7 +419,8 @@ async function prepareLocalModel() {
     geminiModel: getSettings().ai.geminiModel
   })
   configureAI({ ...savedAI, ollamaUrl: url })
-  setLocalModelStatus({ ready: true, phase: 'Qwen2.5 3B is ready', error: '' })
+  logLocalModel('Local model configuration saved.')
+  setLocalModelStatus({ ready: true, stage: 'complete', phase: 'Qwen2.5 3B is ready', error: '' })
 }
 
 function startWakeAssetServer() {
@@ -559,13 +778,25 @@ ipcMain.handle('chat', async (e, { text, kind, id, selection }) => {
 })
 
 app.whenReady().then(async () => {
-  if (!hasSingleInstanceLock) return
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    const isPetWindow = BrowserWindow.fromWebContents(webContents) === mainWindow
-    const requestsAudio = permission === 'media' && details.mediaTypes?.includes('audio')
-    callback(isPetWindow && requestsAudio)
-  })
-  await startWakeAssetServer()
+  if (!hasSingleInstanceLock) {
+    if (installerSetupOnly) {
+      setLocalModelStatus({
+        setupState: 'failed',
+        phase: 'Setup failed',
+        error: 'Another Desktop Pet instance is already running.'
+      })
+      app.exit(1)
+    }
+    return
+  }
+  if (!installerSetupOnly) {
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      const isPetWindow = BrowserWindow.fromWebContents(webContents) === mainWindow
+      const requestsAudio = permission === 'media' && details.mediaTypes?.includes('audio')
+      callback(isPetWindow && requestsAudio)
+    })
+    await startWakeAssetServer()
+  }
   const installerGeminiKey = process.env.DESKTOP_PET_INSTALL_GEMINI_KEY || ''
   delete process.env.DESKTOP_PET_INSTALL_GEMINI_KEY
   if (installerGeminiKey) {
@@ -595,16 +826,33 @@ app.whenReady().then(async () => {
     }
   }
   configureAI(aiSettings)
-  wakeShortcutRegistered = globalShortcut.register(WAKE_SHORTCUT, () => { void handleGlobalShortcut() })
-  console.info(wakeShortcutRegistered ? `[status] global wake shortcut registered: ${WAKE_SHORTCUT}` : `[status] global wake shortcut unavailable: ${WAKE_SHORTCUT}`)
-  createWindow()
-  if (app.isPackaged) {
-    void prepareLocalModel().catch((error) => {
-      console.error('[local-model] automatic setup failed:', error)
-      setLocalModelStatus({ ready: false, phase: 'Automatic Ollama setup failed', error: error.message })
-    })
+  if (!installerSetupOnly) {
+    wakeShortcutRegistered = globalShortcut.register(WAKE_SHORTCUT, () => { void handleGlobalShortcut() })
+    console.info(wakeShortcutRegistered ? `[status] global wake shortcut registered: ${WAKE_SHORTCUT}` : `[status] global wake shortcut unavailable: ${WAKE_SHORTCUT}`)
+    createWindow()
   }
-  warmUpAppCatalog()
+  if (app.isPackaged) {
+    if (installerSetupOnly) {
+      try {
+        await prepareLocalModel()
+        logLocalModel('Setup completed successfully.')
+        setLocalModelStatus({ setupState: 'complete', phase: 'Setup complete.' })
+        app.exit(0)
+      } catch (error) {
+        console.error('[local-model] installer setup failed:', error)
+        logLocalModel(`Setup failed: ${error.message}`)
+        setLocalModelStatus({ ready: false, setupState: 'failed', phase: 'Setup failed', error: error.message })
+        app.exit(1)
+      }
+    } else {
+      void prepareLocalModel().catch((error) => {
+        console.error('[local-model] automatic setup failed:', error)
+        logLocalModel(`Setup failed: ${error.message}`)
+        setLocalModelStatus({ ...localModelStatus, ready: false, phase: 'Setup failed', error: error.message })
+      })
+    }
+  }
+  if (!installerSetupOnly) warmUpAppCatalog()
 })
 app.on('will-quit', () => {
   wakeAssetServer?.close()
