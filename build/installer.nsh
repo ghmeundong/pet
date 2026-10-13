@@ -33,7 +33,8 @@ Var InstallerOllamaModel
   System::Call 'Kernel32::SetEnvironmentVariable(t, t) i ("DESKTOP_PET_INSTALL_OLLAMA_MODEL", "$InstallerOllamaModel").r0'
   nsExec::ExecToLog /TIMEOUT=2700000 '"$appExe" --installer-setup'
   Pop $0
-  System::Call 'Kernel32::SetEnvironmentVariable(t, t) i ("DESKTOP_PET_INSTALL_OLLAMA_MODEL", "").r0'
+  DetailPrint "AI setup process result: $0"
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t) i ("DESKTOP_PET_INSTALL_OLLAMA_MODEL", "").r1'
   ${If} $0 != 0
     MessageBox MB_ICONSTOP|MB_OK "AI setup failed. Review the installer details for more information."
     Abort

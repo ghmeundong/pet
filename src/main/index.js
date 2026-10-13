@@ -562,7 +562,7 @@ async function handleGlobalShortcut() {
     ? `[selection] captured ${selection.text.length} characters via ${selection.source}; target elevated=${selection.targetElevated}, app elevated=${selection.callerElevated}`
     : '[selection] no copyable selected text; waking pet only')
   if (!selection) {
-    wakePet({ mode: 'wake' })
+    wakePet({ mode: 'wake', cursorAnchor })
     return
   }
   const action = {

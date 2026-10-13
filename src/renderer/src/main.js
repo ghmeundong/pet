@@ -645,6 +645,8 @@ window.pet.onWakeShortcut((action = { mode: 'wake' }) => {
     ask(action.text.trim(), 'selection', action)
     return
   }
+  wakeFocusHold = action.cursorAnchor ? { x: action.cursorAnchor.x, y: action.cursorAnchor.y } : null
+  form.classList.remove('away')
   focusInputFromPointer()
   showVoiceStatus('Jarvis is awake and listening for "Hey Jarvis".')
 })
@@ -867,12 +869,23 @@ let petHoveredOnce = false
 let settingsStackSide = null
 let lastCursorPosition = null
 let lastPointerPosition = null
+let wakeFocusHold = null
 let settingsPointerDown = false
 let settingsHideTimer = null
 const SETTINGS_HIDE_DELAY_MS = 800
 
-function onPointer({ x, y }) {
+function onPointer({ x, y, bounds }) {
   lastPointerPosition = { x, y }
+  if (wakeFocusHold) {
+    const screenX = Number.isFinite(bounds?.x) ? bounds.x + x : null
+    const screenY = Number.isFinite(bounds?.y) ? bounds.y + y : null
+    if (screenX === null || Math.hypot(screenX - wakeFocusHold.x, screenY - wakeFocusHold.y) < 2) {
+      form.classList.remove('away')
+      setMouseIgnored(false)
+      return
+    }
+    wakeFocusHold = null
+  }
   const pet = petEl.getBoundingClientRect()
   const overPet = hitTestPet(x, y)
   if (overPet) petHoveredOnce = true
