@@ -48,22 +48,22 @@ Function DesktopPetSettingsPage
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 100% 28u "Gemini API key (optional). It is encrypted for this Windows account after launch. Leave blank to use Ollama and its local model."
+  ${NSD_CreateLabel} 0 0 100% 24u "Gemini API key (optional). Encrypted for this Windows account after launch. Leave blank to use Ollama."
   Pop $0
-  ${NSD_CreatePassword} 0 32u 100% 14u ""
+  ${NSD_CreatePassword} 0 26u 100% 14u ""
   Pop $GeminiKeyInput
 
-  ${NSD_CreateLabel} 0 50u 100% 14u "Choose a local model:"
+  ${NSD_CreateLabel} 0 44u 100% 14u "Choose a local model:"
   Pop $0
-  ${NSD_CreateRadioButton} 0 66u 100% 12u "Qwen2.5 3B - Laptop / minimum recommended"
+  ${NSD_CreateRadioButton} 0 60u 100% 12u "Qwen2.5 3B - lite / laptop recommended"
   Pop $Model3BInput
-  ${NSD_CreateRadioButton} 0 80u 100% 12u "Qwen2.5 7B - Recommended"
+  ${NSD_CreateRadioButton} 0 74u 100% 12u "Qwen2.5 7B - balanced / Desktop recommended"
   Pop $Model7BInput
-  ${NSD_CreateRadioButton} 0 94u 100% 12u "Qwen2.5 14B - High-end computers"
+  ${NSD_CreateRadioButton} 0 88u 100% 12u "Qwen2.5 14B - heavy / high-end computers recommended"
   Pop $Model14BInput
   ${NSD_Check} $Model3BInput
 
-  ${NSD_CreateLabel} 0 110u 100% 90u "Laptop / minimum 3B: 8 GB RAM, 4-core CPU, about 5 GB free disk. Recommended 7B: 16 GB RAM, 6-core CPU, about 8 GB disk; 8 GB VRAM GPU recommended. High-end 14B: 32 GB RAM, 8-core CPU, about 14 GB disk; 12 GB VRAM GPU recommended. All require 64-bit Windows 10 22H2 or Windows 11 and internet for download. GPU is optional; CPU-only runs slower. Disk excludes app files. Qwen license is non-commercial and included."
+  ${NSD_CreateLabel} 0 104u 100% 128u "3B: 8 GB RAM, 4-core CPU, ~5 GB free disk.$\r$\n7B: 16 GB RAM, 6-core CPU, ~8 GB disk. 8 GB VRAM GPU recommended.$\r$\n14B: 32 GB RAM, 8-core CPU, ~14 GB disk. 12 GB VRAM GPU recommended.$\r$\nAll: 64-bit Windows 10 22H2/11;"
   Pop $0
 
   nsDialogs::Show
