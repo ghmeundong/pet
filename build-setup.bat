@@ -34,16 +34,20 @@ if defined OLLAMA_MODELS (
   set "MODEL_ROOT=%USERPROFILE%\.ollama\models"
 )
 set "MODEL_MANIFEST=%MODEL_ROOT%\manifests\registry.ollama.ai\library\qwen2.5\3b"
-
 if not exist "%MODEL_MANIFEST%" (
-  echo [ERROR] The Qwen2.5 3B model license metadata was not found:
-  echo         %MODEL_MANIFEST%
-  echo Install Ollama and run: ollama pull qwen2.5:3b
-  goto :failed
+  set "MODEL_MANIFEST=%MODEL_ROOT%\manifests\registry.ollama.ai\library\qwen2.5\7b"
+  if not exist "%MODEL_MANIFEST%" (
+    set "MODEL_MANIFEST=%MODEL_ROOT%\manifests\registry.ollama.ai\library\qwen2.5\14b"
+    if not exist "%MODEL_MANIFEST%" (
+      echo [ERROR] Qwen2.5 license metadata was not found in the local Ollama model store.
+      echo Install Ollama and run: ollama pull qwen2.5:3b
+      goto :failed
+    )
+  )
 )
 
 echo Building the app and Windows installer...
-echo The installer will install Ollama and download Qwen2.5 3B during setup.
+echo The installer lets users choose Qwen2.5 3B, 7B, or 14B during setup.
 echo.
 set "DIST_DIR=release\build-%RANDOM%-%RANDOM%"
 call npm run dist:prepare

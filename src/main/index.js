@@ -19,6 +19,11 @@ const WIDTH = 440
 const HEIGHT = 800
 const WAKE_SHORTCUT = 'Control+Shift+Space'
 const DEFAULT_OLLAMA_MODEL = 'qwen2.5:3b'
+const OLLAMA_MODELS = {
+  'qwen2.5:3b': { name: 'Qwen2.5 3B', manifest: '3b' },
+  'qwen2.5:7b': { name: 'Qwen2.5 7B', manifest: '7b' },
+  'qwen2.5:14b': { name: 'Qwen2.5 14B', manifest: '14b' }
+}
 const require = createRequire(import.meta.url)
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 const installerSetupOnly = process.argv.includes('--installer-setup')
@@ -185,8 +190,10 @@ async function getOllamaInstallerSize() {
   }
 }
 
-async function getQwenModelSize() {
-  const response = await fetch('https://registry.ollama.ai/v2/library/qwen2.5/manifests/3b', {
+async function getQwenModelSize(model) {
+  const modelInfo = OLLAMA_MODELS[model]
+  if (!modelInfo) throw new Error(`Unsupported Ollama model: ${model}`)
+  const response = await fetch(`https://registry.ollama.ai/v2/library/qwen2.5/manifests/${modelInfo.manifest}`, {
     headers: { Accept: 'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' },
     signal: AbortSignal.timeout(10000)
   })
@@ -197,11 +204,11 @@ async function getQwenModelSize() {
   return total
 }
 
-async function pullOllamaModel(url) {
+async function pullOllamaModel(url, model, modelName) {
   const response = await fetch(`${url}/api/pull`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: DEFAULT_OLLAMA_MODEL, stream: true })
+    body: JSON.stringify({ name: model, stream: true })
   })
   if (!response.ok || !response.body) throw new Error(`Model download failed (HTTP ${response.status}).`)
 
@@ -221,7 +228,7 @@ async function pullOllamaModel(url) {
         const digest = String(progress.digest)
         const layer = layers.get(digest) ?? {
           id: digest,
-          name: `Qwen2.5 3B layer ${layers.size + 1}`,
+          name: `${modelName} layer ${layers.size + 1}`,
           file: digest.replace(':', '-'),
           loggedStatus: ''
         }
@@ -241,14 +248,14 @@ async function pullOllamaModel(url) {
       if (totalBytes) setupDownloadBytes.modelTotal = totalBytes
       const percent = totalBytes ? Math.floor(completedBytes * 100 / totalBytes) : null
       const phase = progress.digest
-        ? 'Downloading Qwen2.5 3B files'
+        ? `Downloading ${modelName} files`
         : progress.status === 'success'
-          ? 'Qwen2.5 3B downloaded'
+          ? `${modelName} downloaded`
           : progress.status === 'verifying sha256'
             ? 'Verifying model files'
             : progress.status === 'writing manifest'
-              ? 'Registering Qwen2.5 3B'
-              : progress.status || 'Preparing Qwen2.5 3B download'
+              ? `Registering ${modelName}`
+              : progress.status || `Preparing ${modelName} download`
       if (!progress.digest && progress.status && progress.status !== lastModelStatus) {
         logLocalModel(`Model setup: ${progress.status}`)
         lastModelStatus = progress.status
@@ -256,6 +263,7 @@ async function pullOllamaModel(url) {
       setLocalModelStatus({
         ready: false,
         stage: 'model',
+        modelName,
         phase,
         percent,
         completedBytes,
@@ -312,8 +320,20 @@ function updateOllamaInstallerProgress(line, installerDownload, installerSize) {
 }
 
 async function prepareLocalModel() {
+  const model = installerSetupOnly
+    ? process.env.DESKTOP_PET_INSTALL_OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL
+    : getSettings().ai.ollamaModel || DEFAULT_OLLAMA_MODEL
+  const modelInfo = OLLAMA_MODELS[model]
+  if (!modelInfo) throw new Error(`Unsupported Ollama model selected for setup: ${model}`)
+  const { name: modelName } = modelInfo
+  const currentAI = getSettings().ai
+  setAISettings({
+    ollamaUrl: 'http://127.0.0.1:11434',
+    ollamaModel: model,
+    geminiModel: currentAI.geminiModel
+  })
   setupDownloadBytes = { ollamaCompleted: 0, ollamaTotal: null, modelCompleted: 0, modelTotal: null }
-  setLocalModelStatus({ ready: false, stage: 'ollama', phase: 'Checking Ollama installation', error: '', logs: [], setupState: 'running' })
+  setLocalModelStatus({ ready: false, stage: 'ollama', modelName, phase: 'Checking Ollama installation', error: '', logs: [], setupState: 'running' })
   logLocalModel('Desktop Pet application files are installed.')
   logLocalModel('Checking whether Ollama is already installed.')
   let ollamaExecutable = findInstalledOllama()
@@ -321,14 +341,14 @@ async function prepareLocalModel() {
     logLocalModel('Ollama is not installed. Preparing the official Windows installer download.')
     const [installerSize, modelSize] = await Promise.all([
       getOllamaInstallerSize(),
-      getQwenModelSize().catch((error) => {
+      getQwenModelSize(model).catch((error) => {
         console.warn('[local-model] could not determine Qwen model size:', error.message)
         return null
       })
     ])
     setupDownloadBytes = { ollamaCompleted: 0, ollamaTotal: installerSize, modelCompleted: 0, modelTotal: modelSize }
     logLocalModel(installerSize ? `OllamaSetup.exe size: ${formatProgressBytes(installerSize)}.` : 'OllamaSetup.exe size could not be determined by the download server.')
-    logLocalModel(modelSize ? `Qwen2.5 3B download size: ${formatProgressBytes(modelSize)}.` : 'Qwen2.5 3B download size is not available yet.')
+    logLocalModel(modelSize ? `${modelName} download size: ${formatProgressBytes(modelSize)}.` : `${modelName} download size is not available yet.`)
     const installerDownload = {
       id: 'ollama-installer',
       name: 'OllamaSetup.exe',
@@ -396,31 +416,31 @@ async function prepareLocalModel() {
   }
   logLocalModel('Ollama server is ready.')
 
-  if (!tags.models?.some(({ name }) => name === DEFAULT_OLLAMA_MODEL)) {
+  if (!tags.models?.some(({ name }) => name === model)) {
     if (setupDownloadBytes.modelTotal === null) {
-      setupDownloadBytes.modelTotal = await getQwenModelSize().catch((error) => {
+      setupDownloadBytes.modelTotal = await getQwenModelSize(model).catch((error) => {
         console.warn('[local-model] could not determine Qwen model size:', error.message)
         return null
       })
     }
-    logLocalModel(`Qwen2.5 3B is not installed. Starting model download from ${url}.`)
-    setLocalModelStatus({ ready: false, stage: 'model', phase: 'Preparing Qwen2.5 3B download', percent: 0, downloads: [], error: '' })
-    await pullOllamaModel(url)
-    logLocalModel('Qwen2.5 3B model download and verification finished.')
+    logLocalModel(`${modelName} is not installed. Starting model download from ${url}.`)
+    setLocalModelStatus({ ready: false, stage: 'model', modelName, phase: `Preparing ${modelName} download`, percent: 0, downloads: [], error: '' })
+    await pullOllamaModel(url, model, modelName)
+    logLocalModel(`${modelName} model download and verification finished.`)
   } else {
     setupDownloadBytes.modelCompleted = 0
     setupDownloadBytes.modelTotal = 0
-    logLocalModel('Qwen2.5 3B is already installed; skipping model download.')
+    logLocalModel(`${modelName} is already installed; skipping model download.`)
   }
 
   const savedAI = setAISettings({
     ollamaUrl: 'http://127.0.0.1:11434',
-    ollamaModel: DEFAULT_OLLAMA_MODEL,
+    ollamaModel: model,
     geminiModel: getSettings().ai.geminiModel
   })
   configureAI({ ...savedAI, ollamaUrl: url })
   logLocalModel('Local model configuration saved.')
-  setLocalModelStatus({ ready: true, stage: 'complete', phase: 'Qwen2.5 3B is ready', error: '' })
+  setLocalModelStatus({ ready: true, stage: 'complete', modelName, phase: `${modelName} is ready`, error: '' })
 }
 
 function startWakeAssetServer() {
@@ -804,7 +824,7 @@ app.whenReady().then(async () => {
     setAISettings({
       geminiApiKey: installerGeminiKey,
       ollamaUrl: 'http://127.0.0.1:11434',
-      ollamaModel: DEFAULT_OLLAMA_MODEL,
+      ollamaModel: currentAI.ollamaModel || DEFAULT_OLLAMA_MODEL,
       geminiModel: currentAI.geminiModel
     })
   }
@@ -812,7 +832,7 @@ app.whenReady().then(async () => {
   if (app.isPackaged) {
     aiSettings = setAISettings({
       ollamaUrl: 'http://127.0.0.1:11434',
-      ollamaModel: DEFAULT_OLLAMA_MODEL,
+      ollamaModel: aiSettings.ollamaModel || DEFAULT_OLLAMA_MODEL,
       geminiModel: aiSettings.geminiModel
     })
   } else if (!(await isOllamaAvailable(aiSettings.ollamaUrl)) && aiSettings.ollamaUrl !== 'http://127.0.0.1:11434') {

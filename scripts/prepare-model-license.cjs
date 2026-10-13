@@ -5,13 +5,21 @@ const path = require('path')
 
 const projectRoot = path.resolve(__dirname, '..')
 const modelRoot = process.env.OLLAMA_MODELS || path.join(os.homedir(), '.ollama', 'models')
-const manifestPath = path.join(modelRoot, 'manifests', 'registry.ollama.ai', 'library', 'qwen2.5', '3b')
+const manifestDirectory = path.join(modelRoot, 'manifests', 'registry.ollama.ai', 'library', 'qwen2.5')
 const licenseDirectory = path.join(projectRoot, 'build', 'model-licenses')
 
 async function main() {
-  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-  const licenseLayer = manifest.layers.find((layer) => layer.mediaType === 'application/vnd.ollama.image.license')
-  if (!licenseLayer) throw new Error('The Qwen2.5 3B model license layer was not found.')
+  let licenseLayer
+  for (const tag of ['3b', '7b', '14b']) {
+    try {
+      const manifest = JSON.parse(await readFile(path.join(manifestDirectory, tag), 'utf8'))
+      licenseLayer = manifest.layers.find((layer) => layer.mediaType === 'application/vnd.ollama.image.license')
+      if (licenseLayer) break
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+  }
+  if (!licenseLayer) throw new Error('A local Qwen2.5 3B, 7B, or 14B model with license metadata is required.')
   const licenseSource = path.join(modelRoot, 'blobs', licenseLayer.digest.replace(':', '-'))
   await stat(licenseSource)
   await mkdir(licenseDirectory, { recursive: true })
@@ -40,7 +48,7 @@ async function main() {
   } finally {
     await rm(temporaryDestination, { force: true }).catch(() => {})
   }
-  console.info('Prepared the Qwen license for the installer acceptance page.')
+  console.info('Prepared the Qwen license for the installer.')
 }
 
 main().catch((error) => {

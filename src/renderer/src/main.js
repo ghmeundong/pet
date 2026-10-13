@@ -176,6 +176,7 @@ let activeChatId = 0
 let chatSequence = 0
 let activeChatKind = ''
 let ttsEnabled = localStorage.getItem('ttsEnabled') !== 'false'
+let hideErrorMessages = localStorage.getItem('hideErrorMessages') === 'true'
 let speechGeneration = 0
 let playingAudio = null
 let playingAudioUrl = ''
@@ -184,6 +185,7 @@ let voiceRecognition = null
 let voiceListening = false
 let voiceSession = 0
 let voiceStatusTimer
+let voiceStatusIsError = false
 
 function stopSpeech() {
   speechGeneration++
@@ -201,8 +203,12 @@ function stopSpeech() {
   finishPlayback?.()
 }
 
-function showVoiceStatus(message, duration = 5000) {
+function showVoiceStatus(message, duration = 5000, isError = false) {
+  if (isError && hideErrorMessages) {
+    return
+  }
   clearTimeout(voiceStatusTimer)
+  voiceStatusIsError = isError
   bubble.textContent = message
   bubble.classList.remove('hidden')
   voiceStatusTimer = setTimeout(() => {
@@ -215,9 +221,10 @@ let wakeWordActive = true
 let wakeShortcutAvailable = true
 window.pet.onWakeShortcutStatus((registered) => {
   wakeShortcutAvailable = registered === true
-  if (!wakeShortcutAvailable) showVoiceStatus('Ctrl+Shift+Space is unavailable. Close other Desktop Pet instances and restart the app.')
+  if (!wakeShortcutAvailable) showVoiceStatus('Ctrl+Shift+Space is unavailable. Close other Desktop Pet instances and restart the app.', 5000, true)
 })
-window.pet.onLocalModelStatus(({ ready, stage, phase, percent, overallPercent, completedBytes, totalBytes, downloads = [], logs = [], error }) => {
+window.pet.onLocalModelStatus(({ ready, stage, modelName = 'Qwen2.5 3B', phase, percent, overallPercent, completedBytes, totalBytes, downloads = [], logs = [], error }) => {
+  setupSteps.model.querySelector('strong').textContent = modelName
   const shouldFollowSetupLog = setupLog.scrollHeight - setupLog.scrollTop - setupLog.clientHeight < 24
   const isInitialLogRender = renderedSetupLogCount === 0
   if (logs.length < renderedSetupLogCount) {
@@ -233,7 +240,7 @@ window.pet.onLocalModelStatus(({ ready, stage, phase, percent, overallPercent, c
   if (logs.length && (shouldFollowSetupLog || isInitialLogRender)) setupLog.scrollTop = setupLog.scrollHeight
   if (ready) {
     setupStatus.classList.add('hidden')
-    showVoiceStatus('Qwen2.5 3B is ready. Jarvis is listening.')
+    showVoiceStatus(`${modelName} is ready. Jarvis is listening.`)
     return
   }
   setupStatus.classList.remove('hidden')
@@ -263,7 +270,7 @@ window.pet.onLocalModelStatus(({ ready, stage, phase, percent, overallPercent, c
     if (step === 'ollama' && stage === step) {
       detail.textContent = phase || 'Preparing Ollama'
     } else if (step === 'model' && stage === step) {
-      detail.textContent = phase || 'Preparing Qwen2.5 3B'
+      detail.textContent = phase || `Preparing ${modelName}`
     } else if (step === 'ollama' && state === 'Complete') {
       detail.textContent = 'Installed and ready'
     } else if (step === 'model' && state === 'Complete') {
@@ -297,7 +304,7 @@ window.pet.onLocalModelStatus(({ ready, stage, phase, percent, overallPercent, c
   setupError.textContent = error || ''
   setupError.classList.toggle('hidden', !error)
   const detail = error || `${phase || 'Preparing local model'}${Number.isFinite(percent) ? ` (${percent}%)` : ''}`
-  showVoiceStatus(`Automatic setup: ${detail}`, 15000)
+  showVoiceStatus(`Automatic setup: ${detail}`, 15000, Boolean(error))
 })
 window.pet.onWakeListenerActive((active) => {
   wakeWordActive = active === true
@@ -312,9 +319,9 @@ window.pet.getWakeAssetsUrl().then((assetUrl) => {
     onError: (error) => {
       console.error('[wake-word] browser engine failed:', error)
       if (error.name === 'NotAllowedError') {
-        showVoiceStatus('Microphone permission was denied. Enable microphone access to use Jarvis.')
-      } else {
-        showVoiceStatus(`Jarvis could not start listening: ${error.message || error}`)
+        showVoiceStatus('Microphone permission was denied. Enable microphone access to use Jarvis.', 5000, true)
+      } else if (!busy && !ttsPlaying) {
+        showVoiceStatus(`Jarvis could not start listening: ${error.message || error}`, 5000, true)
       }
     }
   })
@@ -347,7 +354,7 @@ function startVoiceInput() {
     form.classList.remove('away')
     input.focus()
     console.warn('[voice] SpeechRecognition is unavailable; falling back to keyboard input')
-    showVoiceStatus('Speech recognition is unavailable here. Type your message instead.')
+    showVoiceStatus('Speech recognition is unavailable here. Type your message instead.', 5000, true)
     return
   }
 
@@ -366,11 +373,12 @@ function startVoiceInput() {
   } catch (error) {
     window.pet.setWakeListenerActive(true)
     console.error('[voice] failed to create speech recognizer:', error)
-    showVoiceStatus('Could not initialize voice input. Type your message instead.')
+    showVoiceStatus('Could not initialize voice input. Type your message instead.', 5000, true)
     return
   }
   voiceRecognition = recognition
   voiceListening = true
+  voiceStatusIsError = false
   recognition.lang = 'en-US'
   recognition.continuous = false
   recognition.interimResults = false
@@ -389,7 +397,7 @@ function startVoiceInput() {
     if (transcript) ask(transcript, 'text')
     else {
       window.pet.setWakeListenerActive(true)
-      showVoiceStatus('No speech recognized. Press Ctrl+Shift+Space to try again.')
+      showVoiceStatus('No speech recognized. Press Ctrl+Shift+Space to try again.', 5000, true)
     }
   }
   recognition.onerror = (event) => {
@@ -405,7 +413,7 @@ function startVoiceInput() {
       network: 'Speech recognition needs an internet connection.',
       'no-speech': 'No speech detected. Press Ctrl+Shift+Space to try again.'
     }
-    showVoiceStatus(messages[event.error] ?? `Speech recognition error: ${event.error}`)
+    showVoiceStatus(messages[event.error] ?? `Speech recognition error: ${event.error}`, 5000, true)
   }
   recognition.onend = () => {
     if (!voiceListening || sessionId !== voiceSession) return
@@ -421,7 +429,7 @@ function startVoiceInput() {
     voiceRecognition = null
     window.pet.setWakeListenerActive(true)
     console.error('[voice] failed to start speech recognition:', error)
-    showVoiceStatus('Could not start voice input. Check microphone access and try again.')
+    showVoiceStatus('Could not start voice input. Check microphone access and try again.', 5000, true)
   }
 }
 
@@ -537,6 +545,7 @@ function ask(text, kind, selection = null) {
   }
   let replyText = ''
   let toolsUsed = false
+  voiceStatusIsError = false
   window.pet.chat(text, kind, chatId, {
     onChunk: (c) => {
       if (activeChatId !== chatId) return
@@ -546,6 +555,7 @@ function ask(text, kind, selection = null) {
         bubble.textContent = ''
         statusShown = false
       }
+      voiceStatusIsError = false
       bubble.textContent += c
       bubble.scrollTop = bubble.scrollHeight
     },
@@ -553,6 +563,7 @@ function ask(text, kind, selection = null) {
       if (activeChatId !== chatId) return
       toolsUsed = true
       if (!bubble.textContent || statusShown) {
+        voiceStatusIsError = false
         bubble.textContent = `${label}...`
         statusShown = true
       }
@@ -569,12 +580,13 @@ function ask(text, kind, selection = null) {
     onReset: () => {
       if (activeChatId !== chatId) return
       replyText = ''
+      voiceStatusIsError = false
       bubble.textContent = ''
       statusShown = false
     },
     onError: (m) => {
       if (activeChatId !== chatId) return
-      bubble.textContent = `Oops, something went wrong... (${m})`
+      showVoiceStatus(`Oops, something went wrong... (${m})`, 8000, true)
       finish()
     }
   }, kind === 'selection' ? selection : null)
@@ -792,6 +804,19 @@ async function renderSettings() {
     if (!ttsEnabled) stopSpeech()
   }
   speech.append(speechToggle, ' Speak replies')
+  const errorMessages = document.createElement('label')
+  const errorMessagesToggle = document.createElement('input')
+  errorMessagesToggle.type = 'checkbox'
+  errorMessagesToggle.checked = hideErrorMessages
+  errorMessagesToggle.onchange = () => {
+    hideErrorMessages = errorMessagesToggle.checked
+    localStorage.setItem('hideErrorMessages', String(hideErrorMessages))
+    if (hideErrorMessages && voiceStatusIsError) {
+      clearTimeout(voiceStatusTimer)
+      bubble.classList.add('hidden')
+    }
+  }
+  errorMessages.append(errorMessagesToggle, ' Hide error messages')
   settingsEl.replaceChildren(
     ...Object.entries(TOOL_LABELS).map(([key, label]) => {
       const row = document.createElement('label')
@@ -806,6 +831,7 @@ async function renderSettings() {
     inputSizeSetting,
     volumeSetting,
     speech,
+    errorMessages,
     sleep,
     quit
   )
