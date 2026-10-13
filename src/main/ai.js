@@ -12,6 +12,7 @@ const DEFAULT_LOCAL_OLLAMA_URL = 'http://127.0.0.1:11434'
 const MAX_STEPS = 6
 const MAX_RETRIES = 2
 const GEMINI_503_COOLDOWN_MS = 5 * 60 * 1000
+const USER_DENIED = 'Denied by the user'
 // Markers the tools use in their failure messages
 const FAILURE = /\b(fail(ed|ure)?|cannot|could not|not found|unknown|unavailable|denied|NOT launched|no such|timed out)\b/i
 
@@ -524,6 +525,7 @@ async function routeOllama(text, ctx, specs, generateJSON = ollamaJSON) {
     const result = await runClassifiedTool(action, args, ctx)
     console.log(`[router] ${action}(${JSON.stringify(args)}) -> ${result.slice(0, 200)}`)
     done.push(`${action}(${JSON.stringify(args)}) -> ${result.slice(0, action === 'run_command' ? 1600 : 500)}`)
+    if (result === USER_DENIED) break
     lastFailed = FAILURE.test(result)
     if (lastFailed) failures++
     else if (!explicitFollowUp) break
@@ -539,7 +541,7 @@ async function agentOllama(text, ctx) {
   const tools = getEligibleToolSpecs(text, ctx.classification)
   const planner = ctx.toolPlanner === 'gemini' ? geminiJSON : ollamaJSON
   const done = userSubmitted && tools.length ? await routeOllama(text, ctx, tools, planner) : []
-  ctx.actions = done
+  ctx.actions = done.filter((action) => !action.endsWith(` -> ${USER_DENIED}`))
   const rule = ctx.classification.intent === 'unclear'
     ? ' The request is unclear. Ask one short clarifying question; do not claim to have taken action.'
     : ctx.classification.intent === 'chat'

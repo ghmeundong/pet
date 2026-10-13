@@ -176,7 +176,7 @@ let activeChatId = 0
 let chatSequence = 0
 let activeChatKind = ''
 let ttsEnabled = localStorage.getItem('ttsEnabled') !== 'false'
-let hideErrorMessages = localStorage.getItem('hideErrorMessages') === 'true'
+let hideErrorMessages = localStorage.getItem('hideErrorMessages') !== 'false'
 let speechGeneration = 0
 let playingAudio = null
 let playingAudioUrl = ''
@@ -441,10 +441,12 @@ async function speak(text) {
   if (!ttsEnabled || !speechText) return
   const generation = ++speechGeneration
   try {
-    const encoded = await window.pet.synthesizeSpeech(speechText.slice(0, 1500))
+    const result = await window.pet.synthesizeSpeech(speechText.slice(0, 1500))
     if (generation !== speechGeneration) return
+    const encoded = typeof result === 'string' ? result : result.audio
+    const mimeType = typeof result === 'string' ? 'audio/mpeg' : result.mimeType || 'audio/mpeg'
     const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0))
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }))
+    const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }))
     const audio = new Audio(url)
     audio.volume = masterVolume
     playingAudio = audio

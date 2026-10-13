@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, session } from 'electron'
 import { randomUUID } from 'crypto'
 import { readFile, rm } from 'fs/promises'
-import { spawn, spawnSync } from 'child_process'
+import { execFile, spawn, spawnSync } from 'child_process'
 import { createServer } from 'http'
 import { createRequire } from 'module'
 import { createServer as createTcpServer } from 'net'
@@ -671,20 +671,54 @@ ipcMain.handle('selection:insert', async (event, { target, runtimeId, text }) =>
   if (!mainWindow || event.sender !== mainWindow.webContents) return false
   return insertTextAtTarget(clipboard, target, runtimeId, text)
 })
-ipcMain.handle('tts:synthesize', async (_e, text) => {
-  const file = join(app.getPath('temp'), `desktop-pet-${randomUUID()}.mp3`)
-  try {
-    const tts = new EdgeTTS({
-      voice: 'en-US-AriaNeural',
-      lang: 'en-US',
-      outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
-      rate: '+0%',
-      pitch: '+0Hz'
+function synthesizeWindowsSpeech(text, file) {
+  const textBase64 = Buffer.from(text, 'utf8').toString('base64')
+  const fileBase64 = Buffer.from(file, 'utf8').toString('base64')
+  const script = [
+    `$text=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${textBase64}'))`,
+    `$path=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${fileBase64}'))`,
+    'Add-Type -AssemblyName System.Speech',
+    '$synth=New-Object System.Speech.Synthesis.SpeechSynthesizer',
+    '$synth.Rate=0; $synth.Volume=100',
+    "$voice=$synth.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Culture.Name -eq 'en-US' } | Select-Object -First 1",
+    'if($voice){$synth.SelectVoice($voice.VoiceInfo.Name)}',
+    'try{$synth.SetOutputToWaveFile($path); $synth.Speak($text)}finally{$synth.Dispose()}'
+  ].join('\n')
+  return new Promise((resolveSpeech, rejectSpeech) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+      timeout: 30000,
+      windowsHide: true,
+      encoding: 'utf8'
+    }, (error, stdout, stderr) => {
+      if (error) rejectSpeech(new Error((stderr || stdout || error.message).trim()))
+      else resolveSpeech()
     })
-    await tts.ttsPromise(String(text).slice(0, 1500), file)
-    return (await readFile(file)).toString('base64')
+  })
+}
+
+ipcMain.handle('tts:synthesize', async (_e, text) => {
+  const base = join(app.getPath('temp'), `desktop-pet-${randomUUID()}`)
+  const mp3File = `${base}.mp3`
+  const wavFile = `${base}.wav`
+  const speechText = String(text).slice(0, 1500)
+  try {
+    try {
+      const tts = new EdgeTTS({
+        voice: 'en-US-AriaNeural',
+        lang: 'en-US',
+        outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
+        rate: '+0%',
+        pitch: '+0Hz'
+      })
+      await tts.ttsPromise(speechText, mp3File)
+      return { audio: (await readFile(mp3File)).toString('base64'), mimeType: 'audio/mpeg' }
+    } catch (error) {
+      console.warn('[tts] Edge TTS failed; using Windows speech:', error.message || error)
+      await synthesizeWindowsSpeech(speechText, wavFile)
+      return { audio: (await readFile(wavFile)).toString('base64'), mimeType: 'audio/wav' }
+    }
   } finally {
-    await rm(file, { force: true }).catch(() => {})
+    await Promise.all([rm(mp3File, { force: true }), rm(wavFile, { force: true })])
   }
 })
 
